@@ -199,3 +199,56 @@ while True:
         print(e)
 
         time.sleep(60)
+def generate_signal(df):
+
+    last = df.iloc[-1]
+
+    price = last["close"]
+    ema50 = last["EMA50"]
+    ema200 = last["EMA200"]
+    rsi = last["RSI"]
+
+    if ema50 > ema200 and rsi > 55:
+        signal = "BUY"
+    elif ema50 < ema200 and rsi < 45:
+        signal = "SELL"
+    else:
+        signal = None
+
+    return signal, price,
+    
+    def send_signal(signal, price, rsi):
+
+    tp = price + 3
+    sl = price - 2
+
+    if signal == "SELL":
+        tp = price - 3
+        sl = price + 2
+
+    text = f"""
+🔥 XAUUSD AI SIGNAL
+
+Signal: {signal}
+
+Entry: {price}
+Take Profit: {tp}
+Stop Loss: {sl}
+
+RSI: {rsi}
+"""
+
+    send_message(text)
+
+while True:
+
+    df = get_data()
+
+    df = calculate_indicators(df)
+
+    signal, price, rsi = generate_signal(df)
+
+    if signal:
+        send_signal(signal, price, rsi)
+
+    time.sleep(300)
