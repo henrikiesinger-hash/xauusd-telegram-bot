@@ -218,9 +218,8 @@ def generate_signal(df):
     return signal, price,
     
     def send_signal(signal, price, rsi):
-
-    tp = price + 3
-    sl = price - 2
+        tp = price + 3
+        sl = price - 2
 
     if signal == "SELL":
         tp = price - 3
