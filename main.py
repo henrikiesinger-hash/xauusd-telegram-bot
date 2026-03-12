@@ -1,8 +1,7 @@
 import requests
 import time
 
-TOKEN = "8725949555:AAGAP_yRzQuiaRKumniwkBSu7SdMLQHgtzA
-"
+TOKEN = "8725949555:AAGAP_yRzQuiaRKumniwkBSu7SdMLQHgtzA"
 CHAT_ID = "6669831090"
 
 def send_message(text):
