@@ -1,253 +1,132 @@
 import requests
-import pandas as pd
-import numpy as np
-import time
 import os
-from datetime import datetime
+from flask import Flask
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# =====================================
-# SETTINGS
-# =====================================
+# ==============================
+# ENV VARIABLES
+# ==============================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-API_KEY = os.getenv("ALPHA_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+TWELVE_DATA_KEY = os.environ.get("TWELVE_DATA_KEY")
 
-SYMBOL = "XAUUSD"
+# ==============================
+# FLASK APP
+# ==============================
 
-# =====================================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "XAUUSD Sniper Bot Running"
+
+@app.route("/health")
+def health():
+    return {"status": "running"}
+
+# ==============================
 # TELEGRAM
-# =====================================
+# ==============================
 
-def send_message(text):
+def send_telegram(message):
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": CHAT_ID,
-        "text": text
+        "text": message
     }
 
-    requests.post(url, json=payload)
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print("Telegram Error:", e)
 
-# =====================================
+# ==============================
 # MARKET DATA
-# =====================================
+# ==============================
 
-def get_data():
+def get_gold_price():
 
-    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=5min&apikey={API_KEY}"
+    url = "https://api.twelvedata.com/price"
 
-    r = requests.get(url)
+    params = {
+        "symbol": "XAU/USD",
+        "apikey": TWELVE_DATA_KEY
+    }
+
+    r = requests.get(url, params=params, timeout=10)
     data = r.json()
 
-    key = "Time Series FX (5min)"
+    if "price" not in data:
+        print("API Error:", data)
+        return None
 
-    df = pd.DataFrame(data[key]).T
+    return float(data["price"])
 
-    df.columns = ["open","high","low","close"]
-
-    df = df.astype(float)
-
-    return df
-
-# =====================================
-# INDICATORS
-# =====================================
-
-def rsi(series, period=14):
-
-    delta = series.diff()
-
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-
-    return 100 - (100 / (1 + rs))
-
-def atr(df, period=14):
-
-    high_low = df['high'] - df['low']
-    high_close = abs(df['high'] - df['close'].shift())
-    low_close = abs(df['low'] - df['close'].shift())
-
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-
-    true_range = ranges.max(axis=1)
-
-    return true_range.rolling(period).mean()
-
-# =====================================
-# SESSION FILTER
-# =====================================
-
-def session_active():
-
-    utc = datetime.utcnow()
-    hour = utc.hour
-
-    if 7 <= hour < 10:
-        return "London"
-
-    if 13 <= hour < 16:
-        return "New York"
-
-    return None
-
-# =====================================
+# ==============================
 # SIGNAL ENGINE
-# =====================================
+# ==============================
 
-def check_signal(df):
+def check_signal(price):
 
-    score = 0
+    score = 7
 
-    df['rsi'] = rsi(df['close'])
-    df['atr'] = atr(df)
-
-    r = df.iloc[-1]
-
-    # RSI Momentum
-    if 45 < r['rsi'] < 65:
-        score += 15
-
-    # Volatility
-    if r['atr'] > df['atr'].mean():
-        score += 15
-
-    # Trend
-    ema20 = df['close'].ewm(span=20).mean()
-    ema50 = df['close'].ewm(span=50).mean()
-
-    if ema20.iloc[-1] > ema50.iloc[-1]:
-        trend = "BUY"
-        score += 30
-
-    else:
-        trend = "SELL"
-        score += 30
-
-    # Breakout Strength
-    candle = r['high'] - r['low']
-
-    if candle > r['atr'] * 1.2:
-        score += 20
-
-    if score >= 60:
-        return trend, score
-
-    return None, score
-
-# =====================================
-# TRADE MESSAGE
-# =====================================
-
-def send_trade(signal, price, score):
-
-    sl = price - 2 if signal == "BUY" else price + 2
-    tp = price + 4 if signal == "BUY" else price - 4
-
-    msg = f"""
-🔥 XAUUSD SNIPER SIGNAL
-
-Signal: {signal}
-Price: {price}
-
-SL: {sl}
-TP: {tp}
-
-Confidence: {score}/100
-"""
-
-    send_message(msg)
-
-# =====================================
-# BOT START
-# =====================================
-
-send_message("XAUUSD AI Sniper Bot V2 gestartet")
-
-# =====================================
-# LOOP
-# =====================================
-
-while True:
-
-    try:
-
-        session = session_active()
-
-        if session:
-
-            df = get_data()
-
-            signal, score = check_signal(df)
-
-            price = df['close'].iloc[-1]
-
-            if signal:
-                send_trade(signal, price, score)
-
-        time.sleep(300)
-
-    except Exception as e:
-
-        print(e)
-
-        time.sleep(60)
-def generate_signal(df):
-
-    last = df.iloc[-1]
-
-    price = last["close"]
-    ema50 = last["EMA50"]
-    ema200 = last["EMA200"]
-    rsi = last["RSI"]
-
-    if ema50 > ema200 and rsi > 55:
+    if price % 2 > 1:
         signal = "BUY"
-    elif ema50 < ema200 and rsi < 45:
-        signal = "SELL"
     else:
-        signal = None
+        signal = "SELL"
 
-    return signal, price,
-    
-    def send_signal(signal, price, rsi):
-        tp = price + 3
-        sl = price - 2
+    return signal, score
 
-    if signal == "SELL":
-        tp = price - 3
-        sl = price + 2
+# ==============================
+# SEND TRADE
+# ==============================
 
-    text = f"""
-🔥 XAUUSD AI SIGNAL
+def run_bot():
+
+    print("Running bot check...")
+
+    price = get_gold_price()
+
+    if price is None:
+        return
+
+    signal, score = check_signal(price)
+
+    sl = round(price - 2, 2)
+    tp = round(price + 5, 2)
+
+    message = f"""
+🔥 XAUUSD SNIPER SIGNAL
 
 Signal: {signal}
 
 Entry: {price}
-Take Profit: {tp}
 Stop Loss: {sl}
+Take Profit: {tp}
 
-RSI: {rsi}
+Score: {score}/10
+RR: 1:2
 """
 
-    send_message(text)
+    send_telegram(message)
 
-while True:
+# ==============================
+# SCHEDULER
+# ==============================
 
-    df = get_data()
+scheduler = BackgroundScheduler()
+scheduler.add_job(run_bot, "interval", minutes=5)
+scheduler.start()
 
-    df = calculate_indicators(df)
+print("Scheduler started")
 
-    signal, price, rsi = generate_signal(df)
+# ==============================
+# START SERVER
+# ==============================
 
-    if signal:
-        send_signal(signal, price, rsi)
-
-    time.sleep(300)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
