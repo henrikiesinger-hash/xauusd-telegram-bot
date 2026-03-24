@@ -30,7 +30,12 @@ def send_telegram(message):
         "text": message
     }
 
-    requests.post(url,data=payload)
+    try:
+        response = requests.post(url, data=payload, timeout=10)
+        print("Telegram response:", response.status_code)
+        print("Telegram text:", response.text)
+    except Exception as e:
+        print("Telegram error:", e)
 
 
 def run_bot():
