@@ -1,4 +1,6 @@
 import requests
+import logging
+logging.basicConfig(level=logging.INFO)
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -40,7 +42,7 @@ def send_telegram(message):
 
 def run_bot():
 
-    print("Bot check running...")
+    logging.info("Bot check running...")
 
     if not weekend_filter():
         print("Weekend")
@@ -91,4 +93,5 @@ scheduler.start()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0",port=8080)
+    run_bot()  # ← HIER eingefügt
+    app.run(host="0.0.0.0", port=8080)
