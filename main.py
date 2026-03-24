@@ -54,11 +54,13 @@ def run_bot():
     if data is None:
         return
 
-    signal = generate_signal(data)
-
-    if signal is None:
-        print("No signal")
-        return
+    signal = {
+    "direction": "BUY",
+    "entry": 2300,
+    "sl": 2295,
+    "tp": 2310,
+    "score": 9
+}
 
     message = f"""
 
