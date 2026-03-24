@@ -41,13 +41,13 @@ def run_bot():
         print("Weekend")
         return
 
-#    if not session_filter():
-#        print("Session closed")
-#        return
+    if not session_filter():
+        print("Session closed")
+        return
 
-#    if not cooldown_filter():
-#        print("Cooldown active")
-#        return
+    if not cooldown_filter():
+        print("Cooldown active")
+        return
 
     data = get_candles("5min")
 
