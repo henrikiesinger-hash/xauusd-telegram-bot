@@ -34,20 +34,24 @@ def market_structure(highs, lows):
 
 
 def break_of_structure(highs, lows, closes, lookback=15):
-    if len(highs) < lookback + 2:
-        return None
+    if len(highs) < lookback + 3:
+        return None, None
 
-    prev_swing_high = max(highs[-(lookback + 1):-1])
-    prev_swing_low = min(lows[-(lookback + 1):-1])
+    prev_swing_high = max(highs[-(lookback + 2):-2])
+    prev_swing_low = min(lows[-(lookback + 2):-2])
+
     last_close = closes[-1]
+    prev_close = closes[-2]
 
-    if last_close > prev_swing_high:
-        return "bullish"
+    # Bullish BOS only if current or previous candle closed above structure
+    if prev_close > prev_swing_high or last_close > prev_swing_high:
+        return "bullish", prev_swing_high
 
-    if last_close < prev_swing_low:
-        return "bearish"
+    # Bearish BOS only if current or previous candle closed below structure
+    if prev_close < prev_swing_low or last_close < prev_swing_low:
+        return "bearish", prev_swing_low
 
-    return None
+    return None, None
 
 
 def choch_signal(highs, lows, closes):
@@ -55,7 +59,7 @@ def choch_signal(highs, lows, closes):
         return None
 
     structure = market_structure(highs[:-1], lows[:-1])
-    bos = break_of_structure(highs, lows, closes, lookback=10)
+    bos, _ = break_of_structure(highs, lows, closes, lookback=10)
 
     if structure == "bearish" and bos == "bullish":
         return "bullish"
@@ -90,7 +94,7 @@ def liquidity_sweep(highs, lows, closes, lookback=8):
 
 def orderblock_signal(opens, highs, lows, closes):
     if len(opens) < 3:
-        return None
+        return None, None, None
 
     prev_open = opens[-2]
     prev_close = closes[-2]
@@ -100,13 +104,13 @@ def orderblock_signal(opens, highs, lows, closes):
 
     # bullish orderblock confirmation
     if prev_close < prev_open and last_close > prev_high:
-        return "bullish"
+        return "bullish", prev_low, prev_high
 
     # bearish orderblock confirmation
     if prev_close > prev_open and last_close < prev_low:
-        return "bearish"
+        return "bearish", prev_low, prev_high
 
-    return None
+    return None, None, None
 
 
 def premium_discount_zone(highs, lows, price):
@@ -174,6 +178,73 @@ def volatility_ok(highs, lows, closes):
     return atr_value >= min_required, atr_value
 
 
+def retest_after_bos(closes, bos_level, direction, tolerance):
+    if bos_level is None or len(closes) < 4:
+        return False
+
+    recent_prices = closes[-4:]
+
+    if direction == "bullish":
+        # after bullish BOS, price should retest near the broken level and hold above
+        touched = any(abs(price - bos_level) <= tolerance for price in recent_prices[:-1])
+        held = closes[-1] > bos_level
+        return touched and held
+
+    if direction == "bearish":
+        # after bearish BOS, price should retest near the broken level and hold below
+        touched = any(abs(price - bos_level) <= tolerance for price in recent_prices[:-1])
+        held = closes[-1] < bos_level
+        return touched and held
+
+    return False
+
+
+def entry_not_too_extended(price, bos_level, atr_value):
+    if bos_level is None or atr_value <= 0:
+        return False
+
+    distance = abs(price - bos_level)
+
+    # avoid chasing late entries
+    return distance <= (atr_value * 1.2)
+
+
+def candle_confirmation(opens, closes, direction):
+    if len(opens) < 2 or len(closes) < 2:
+        return False
+
+    last_open = opens[-1]
+    last_close = closes[-1]
+
+    if direction == "bullish":
+        return last_close > last_open
+
+    if direction == "bearish":
+        return last_close < last_open
+
+    return False
+
+
+def fakeout_filter(highs, lows, closes, bos_direction, bos_level, atr_value):
+    if bos_direction is None or bos_level is None:
+        return False
+
+    if len(closes) < 3:
+        return False
+
+    last_close = closes[-1]
+
+    # reject fake bullish BOS if price snaps back too far below level
+    if bos_direction == "bullish":
+        return last_close >= (bos_level - atr_value * 0.25)
+
+    # reject fake bearish BOS if price snaps back too far above level
+    if bos_direction == "bearish":
+        return last_close <= (bos_level + atr_value * 0.25)
+
+    return False
+
+
 def calculate_trade(entry, direction, highs, lows, atr_value):
     recent_high = max(highs[-12:])
     recent_low = min(lows[-12:])
@@ -190,7 +261,7 @@ def calculate_trade(entry, direction, highs, lows, atr_value):
     return round(sl, 2), round(tp, 2), round(risk, 2)
 
 
-def build_reasons(direction, h1_trend, m15_structure, bos, choch, sweep, ob, zone, fib_ok, rsi_value):
+def build_reasons(direction, h1_trend, m15_structure, bos, choch, sweep, ob, zone, fib_ok, rsi_value, retest_ok):
     reasons = []
 
     reasons.append(f"H1 Trend: {h1_trend}")
@@ -209,12 +280,12 @@ def build_reasons(direction, h1_trend, m15_structure, bos, choch, sweep, ob, zon
         reasons.append(f"Orderblock: {ob}")
 
     reasons.append(f"Zone: {zone}")
+    reasons.append(f"Retest: {'yes' if retest_ok else 'no'}")
 
     if fib_ok:
         reasons.append("Fib Entry Zone: yes")
 
     reasons.append(f"RSI: {round(rsi_value, 2)}")
-
     reasons.append(f"Direction: {direction}")
 
     return " | ".join(reasons)
@@ -251,12 +322,12 @@ def generate_signal(data_m5):
 
     # M15 bias
     m15_structure = market_structure(highs_15, lows_15)
-    bos = break_of_structure(highs_15, lows_15, closes_15, lookback=15)
+    bos, bos_level = break_of_structure(highs_15, lows_15, closes_15, lookback=15)
     choch = choch_signal(highs_15, lows_15, closes_15)
 
     # M5 entry confirmations
     sweep = liquidity_sweep(highs_5, lows_5, closes_5, lookback=8)
-    ob = orderblock_signal(opens_5, highs_5, lows_5, closes_5)
+    ob, ob_low, ob_high = orderblock_signal(opens_5, highs_5, lows_5, closes_5)
     zone, _, _, _ = premium_discount_zone(highs_15, lows_15, price)
     momentum, rsi_value = momentum_bias(closes_5)
     fib_bull_ok, fib_bull_low, fib_bull_high = fibonacci_entry_zone(highs_15, lows_15, price, "bullish")
@@ -302,7 +373,7 @@ def generate_signal(data_m5):
     if ob == "bearish":
         sell_score += 1
 
-    # Premium / Discount
+    # Strict zone validation
     if zone == "discount":
         buy_score += 1
     if zone == "premium":
@@ -325,17 +396,62 @@ def generate_signal(data_m5):
         buy_score += 1
         sell_score += 1
 
+    # Retest + fakeout + delay filters
+    bullish_retest_ok = retest_after_bos(closes_5, bos_level, "bullish", atr_value * 0.35)
+    bearish_retest_ok = retest_after_bos(closes_5, bos_level, "bearish", atr_value * 0.35)
+
+    bullish_not_extended = entry_not_too_extended(price, bos_level, atr_value)
+    bearish_not_extended = entry_not_too_extended(price, bos_level, atr_value)
+
+    bullish_candle_ok = candle_confirmation(opens_5, closes_5, "bullish")
+    bearish_candle_ok = candle_confirmation(opens_5, closes_5, "bearish")
+
+    bullish_fakeout_ok = fakeout_filter(highs_5, lows_5, closes_5, "bullish", bos_level, atr_value)
+    bearish_fakeout_ok = fakeout_filter(highs_5, lows_5, closes_5, "bearish", bos_level, atr_value)
+
     direction = None
     score = 0
     fib_text = ""
 
+    # BUY decision
     if buy_score >= SIGNAL_SCORE_THRESHOLD and buy_score > sell_score:
+        if h1_trend != "bullish":
+            return None
+        if zone != "discount":
+            return None
+        if rsi_value >= 70:
+            return None
+        if not bullish_retest_ok:
+            return None
+        if not bullish_not_extended:
+            return None
+        if not bullish_candle_ok:
+            return None
+        if not bullish_fakeout_ok:
+            return None
+
         direction = "BUY"
         score = buy_score
         if fib_bull_ok:
             fib_text = f"Fib Zone: {fib_bull_low}-{fib_bull_high}"
 
+    # SELL decision
     elif sell_score >= SIGNAL_SCORE_THRESHOLD and sell_score > buy_score:
+        if h1_trend != "bearish":
+            return None
+        if zone != "premium":
+            return None
+        if rsi_value <= 30:
+            return None
+        if not bearish_retest_ok:
+            return None
+        if not bearish_not_extended:
+            return None
+        if not bearish_candle_ok:
+            return None
+        if not bearish_fakeout_ok:
+            return None
+
         direction = "SELL"
         score = sell_score
         if fib_bear_ok:
@@ -359,7 +475,8 @@ def generate_signal(data_m5):
         ob=ob,
         zone=zone,
         fib_ok=(fib_bull_ok if direction == "BUY" else fib_bear_ok),
-        rsi_value=rsi_value
+        rsi_value=rsi_value,
+        retest_ok=(bullish_retest_ok if direction == "BUY" else bearish_retest_ok)
     )
 
     extra = fib_text if fib_text else "Fib Zone: no"
