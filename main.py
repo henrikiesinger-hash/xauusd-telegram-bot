@@ -61,13 +61,11 @@ def run_bot():
 
     signal = generate_signal(data)
 
-if signal is None:
-    print("No signal")
-    return
-
+    if signal is None:
+        print("No signal")
+        return
 
     message = f"""
-
 🔥 XAUUSD SNIPER SIGNAL
 
 Direction: {signal["direction"]}
