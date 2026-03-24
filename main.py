@@ -6,6 +6,9 @@ from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import TELEGRAM_TOKEN, CHAT_ID
+from data import get_candles
+from strategy import generate_signal
+from filters import weekend_filter, session_filter, cooldown_filter, update_signal_time
 
 
 app = Flask(__name__)
@@ -43,22 +46,61 @@ def send_telegram(message):
 
 
 # ==============================
-# BOT TEST
+# BOT LOGIC
 # ==============================
 
 def run_bot():
 
-    logging.info("TEST BOT RUNNING...")
+    logging.info("Bot check running...")
 
+    # FILTERS
+    if not weekend_filter():
+        logging.info("Weekend - no trading")
+        return
+
+    if not session_filter():
+        logging.info("Session closed")
+        return
+
+    if not cooldown_filter():
+        logging.info("Cooldown active")
+        return
+
+    # DATA
+    data = get_candles("5min")
+
+    if data is None:
+        logging.info("No market data")
+        return
+
+    # SIGNAL
+    signal = generate_signal(data)
+
+    if signal is None:
+        logging.info("No valid signal")
+        return
+
+    # MESSAGE
     message = f"""
-🔥 TEST SIGNAL
+🔥 XAUUSD SNIPER SIGNAL
 
-Bot funktioniert korrekt ✅
+Direction: {signal["direction"]}
 
-Time: TEST RUN
+Entry: {signal["entry"]}
+
+Stop Loss: {signal["sl"]}
+
+Take Profit: {signal["tp"]}
+
+Signal Score: {signal["score"]}/10
+RR: 1:2
 """
 
+    # SEND
     send_telegram(message)
+
+    # UPDATE COOLDOWN
+    update_signal_time()
 
 
 # ==============================
@@ -66,11 +108,8 @@ Time: TEST RUN
 # ==============================
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(run_bot, "interval", minutes=5)
+scheduler.add_job(run_bot, "interval", minutes=5, max_instances=1)
 scheduler.start()
-
-# 🔥 WICHTIG: SOFORT AUSFÜHREN (TEST)
-run_bot()
 
 
 # ==============================
