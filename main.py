@@ -59,7 +59,7 @@ def run_bot():
 if signal is None:
     print("No signal")
     return
-}
+
 
     message = f"""
 
