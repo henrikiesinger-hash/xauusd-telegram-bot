@@ -81,7 +81,7 @@ def run_bot():
         return
 
     # MESSAGE
-message = f"""
+    message = f"""
 🔥 XAUUSD SMART MONEY SIGNAL
 
 Direction: {signal["direction"]}
@@ -100,7 +100,6 @@ Setup:
 
     # UPDATE COOLDOWN
     update_signal_time()
-
 
 # ==============================
 # SCHEDULER
