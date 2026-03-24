@@ -5,7 +5,6 @@ BASE_URL = "https://api.twelvedata.com/time_series"
 
 
 def get_candles(interval="5min", limit=200):
-
     params = {
         "symbol": SYMBOL,
         "interval": interval,
@@ -13,8 +12,12 @@ def get_candles(interval="5min", limit=200):
         "outputsize": limit
     }
 
-    r = requests.get(BASE_URL, params=params, timeout=10)
-    data = r.json()
+    try:
+        r = requests.get(BASE_URL, params=params, timeout=10)
+        data = r.json()
+    except Exception as e:
+        print("API REQUEST ERROR:", e)
+        return None
 
     if "values" not in data:
         print("API ERROR:", data)
@@ -22,12 +25,16 @@ def get_candles(interval="5min", limit=200):
 
     candles = list(reversed(data["values"]))
 
-    closes = [float(c["close"]) for c in candles]
+    opens = [float(c["open"]) for c in candles]
     highs = [float(c["high"]) for c in candles]
     lows = [float(c["low"]) for c in candles]
+    closes = [float(c["close"]) for c in candles]
+    times = [c["datetime"] for c in candles]
 
     return {
-        "close": closes,
+        "open": opens,
         "high": highs,
-        "low": lows
+        "low": lows,
+        "close": closes,
+        "time": times
     }
