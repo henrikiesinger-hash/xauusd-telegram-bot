@@ -81,19 +81,18 @@ def run_bot():
         return
 
     # MESSAGE
-    message = f"""
-🔥 XAUUSD SNIPER SIGNAL
+message = f"""
+🔥 XAUUSD SMART MONEY SIGNAL
 
 Direction: {signal["direction"]}
-
 Entry: {signal["entry"]}
-
 Stop Loss: {signal["sl"]}
-
 Take Profit: {signal["tp"]}
 
 Signal Score: {signal["score"]}/10
-RR: 1:2
+
+Setup:
+{signal["notes"]}
 """
 
     # SEND
