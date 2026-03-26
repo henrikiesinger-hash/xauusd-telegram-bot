@@ -9,7 +9,7 @@ from config import TELEGRAM_TOKEN, CHAT_ID
 from data import get_candles
 from strategy import generate_signal
 from filters import weekend_filter, session_filter, cooldown_filter, update_signal_time
-from risk_engine import build_trade  # 🔥 NEU
+from risk_engine import build_trade
 
 app = Flask(__name__)
 
@@ -40,7 +40,6 @@ def send_telegram(message):
     try:
         response = requests.post(url, data=payload, timeout=10)
         logging.info(f"Telegram status: {response.status_code}")
-        logging.info(f"Telegram response: {response.text}")
     except Exception as e:
         logging.error(f"Telegram error: {e}")
 
@@ -53,10 +52,7 @@ def run_bot():
 
     logging.info("Bot check running...")
 
-    # ==============================
     # FILTERS
-    # ==============================
-
     if not weekend_filter():
         logging.info("Weekend - no trading")
         return
@@ -69,47 +65,64 @@ def run_bot():
         logging.info("Cooldown active")
         return
 
-    # ==============================
     # DATA
-    # ==============================
-
     data = get_candles("5min")
 
     if data is None:
         logging.info("No market data")
         return
 
-    # ==============================
-    # SIGNAL (OHNE SL/TP!)
-    # ==============================
+    # 🔥 SAFETY: check DataFrame structure
+    try:
+        if not all(col in data.columns for col in ["high", "low", "close"]):
+            logging.error("❌ Data format invalid")
+            return
+    except Exception as e:
+        logging.error(f"❌ Data error: {e}")
+        return
 
-    signal = generate_signal(data)
+    # SIGNAL
+    try:
+        signal = generate_signal(data)
+    except Exception as e:
+        logging.error(f"❌ Strategy error: {e}")
+        return
 
     if signal is None:
         logging.info("No valid signal")
         return
 
+    # 🔥 SAFETY: check keys
+    if "direction" not in signal or "entry" not in signal:
+        logging.error("❌ Signal missing keys")
+        return
+
     direction = signal["direction"]
     entry = signal["entry"]
 
-    # ==============================
-    # 🔥 RISK ENGINE (HIER PASSIERT DER MAGIC)
-    # ==============================
+    # 🔥 SAFETY: check values
+    if direction not in ["BUY", "SELL"]:
+        logging.error("❌ Invalid direction")
+        return
 
-    trade = build_trade(
-        data,
-        direction=direction,
-        entry=entry
-    )
+    try:
+        entry = float(entry)
+    except:
+        logging.error("❌ Entry invalid")
+        return
+
+    # 🔥 RISK ENGINE
+    try:
+        trade = build_trade(data, direction, entry)
+    except Exception as e:
+        logging.error(f"❌ Risk Engine crash: {e}")
+        return
 
     if not trade["valid"]:
         logging.info(f"❌ Trade blockiert: {trade['reason']}")
         return
 
-    # ==============================
     # MESSAGE
-    # ==============================
-
     message = f"""
 🔥 XAUUSD SMART MONEY SIGNAL
 
@@ -120,21 +133,13 @@ Take Profit: {trade["tp"]}
 
 Risk: {trade["risk"]}$
 
-Signal Score: {signal["score"]}/10
+Signal Score: {signal.get("score", "N/A")}/10
 
 Setup:
-{signal["notes"]}
+{signal.get("notes", "No details")}
 """
 
-    # ==============================
-    # SEND
-    # ==============================
-
     send_telegram(message)
-
-    # ==============================
-    # COOLDOWN UPDATE
-    # ==============================
 
     update_signal_time()
 
