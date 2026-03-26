@@ -9,7 +9,7 @@ from config import TELEGRAM_TOKEN, CHAT_ID
 from data import get_candles
 from strategy import generate_signal
 from filters import weekend_filter, session_filter, cooldown_filter, update_signal_time
-
+from risk_engine import build_trade  # 🔥 NEU
 
 app = Flask(__name__)
 
@@ -53,7 +53,10 @@ def run_bot():
 
     logging.info("Bot check running...")
 
+    # ==============================
     # FILTERS
+    # ==============================
+
     if not weekend_filter():
         logging.info("Weekend - no trading")
         return
@@ -66,28 +69,56 @@ def run_bot():
         logging.info("Cooldown active")
         return
 
+    # ==============================
     # DATA
+    # ==============================
+
     data = get_candles("5min")
 
     if data is None:
         logging.info("No market data")
         return
 
-    # SIGNAL
+    # ==============================
+    # SIGNAL (OHNE SL/TP!)
+    # ==============================
+
     signal = generate_signal(data)
 
     if signal is None:
         logging.info("No valid signal")
         return
 
+    direction = signal["direction"]
+    entry = signal["entry"]
+
+    # ==============================
+    # 🔥 RISK ENGINE (HIER PASSIERT DER MAGIC)
+    # ==============================
+
+    trade = build_trade(
+        data,
+        direction=direction,
+        entry=entry
+    )
+
+    if not trade["valid"]:
+        logging.info(f"❌ Trade blockiert: {trade['reason']}")
+        return
+
+    # ==============================
     # MESSAGE
+    # ==============================
+
     message = f"""
 🔥 XAUUSD SMART MONEY SIGNAL
 
-Direction: {signal["direction"]}
-Entry: {signal["entry"]}
-Stop Loss: {signal["sl"]}
-Take Profit: {signal["tp"]}
+Direction: {direction}
+Entry: {trade["entry"]}
+Stop Loss: {trade["sl"]}
+Take Profit: {trade["tp"]}
+
+Risk: {trade["risk"]}$
 
 Signal Score: {signal["score"]}/10
 
@@ -95,11 +126,18 @@ Setup:
 {signal["notes"]}
 """
 
+    # ==============================
     # SEND
+    # ==============================
+
     send_telegram(message)
 
-    # UPDATE COOLDOWN
+    # ==============================
+    # COOLDOWN UPDATE
+    # ==============================
+
     update_signal_time()
+
 
 # ==============================
 # SCHEDULER
