@@ -373,7 +373,7 @@ def calculate_score(
     zone_ok = (
         (direction == "bullish" and zone == "discount") or
         (direction == "bearish" and zone == "premium")
-    )
+    
     if zone_ok:
         score += 0.5
         parts.append("Zone +0.5")
