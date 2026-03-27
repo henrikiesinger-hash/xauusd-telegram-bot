@@ -1,12 +1,64 @@
 import logging
+import time
 from indicators import ema, rsi
 from data import get_candles
 
 log = logging.getLogger("strategy")
 
+# ==============================
+# CONFIG
+# ==============================
+SCORE_THRESHOLD = 6.5
+COOLDOWN_SECONDS = 3600
+LONDON_OPEN_UTC = 7
+NY_CLOSE_UTC = 21
+MIN_SL = 0.80
+MAX_SL = 5.00
+
+_last_signal_time = 0
+_htf_cache = {"data": None, "timestamp": 0}
+HTF_CACHE_TTL = 300
 
 # ==============================
-# SWING POINTS
+# SESSION FILTER
+# ==============================
+def is_active_session():
+    hour = int(time.strftime("%H", time.gmtime()))
+    return LONDON_OPEN_UTC <= hour < NY_CLOSE_UTC
+
+# ==============================
+# COOLDOWN
+# ==============================
+def is_in_cooldown():
+    global _last_signal_time
+    return (time.time() - _last_signal_time) < COOLDOWN_SECONDS
+
+def record_signal():
+    global _last_signal_time
+    _last_signal_time = time.time()
+
+# ==============================
+# HTF DATA (CACHE)
+# ==============================
+def get_htf_data():
+    global _htf_cache
+    now = time.time()
+
+    if _htf_cache["data"] is not None and (now - _htf_cache["timestamp"]) < HTF_CACHE_TTL:
+        return _htf_cache["data"]
+
+    m15 = get_candles("15min")
+    h1 = get_candles("1h")
+
+    if m15 is None or h1 is None:
+        return None
+
+    _htf_cache["data"] = (m15, h1)
+    _htf_cache["timestamp"] = now
+    return (m15, h1)
+
+# ==============================
+# SWINGS
 # ==============================
 def find_swing_highs(highs, left=5, right=5):
     swings = []
@@ -16,7 +68,6 @@ def find_swing_highs(highs, left=5, right=5):
             swings.append((i, highs[i]))
     return swings
 
-
 def find_swing_lows(lows, left=5, right=5):
     swings = []
     for i in range(left, len(lows) - right):
@@ -25,9 +76,8 @@ def find_swing_lows(lows, left=5, right=5):
             swings.append((i, lows[i]))
     return swings
 
-
 # ==============================
-# MARKET STRUCTURE
+# STRUCTURE
 # ==============================
 def market_structure(highs, lows):
     sh = find_swing_highs(highs)
@@ -48,29 +98,27 @@ def market_structure(highs, lows):
 
     return "ranging", 0.3
 
-
 # ==============================
-# H1 TREND
+# TREND
 # ==============================
 def trend_direction(closes):
     if len(closes) < 200:
         return None, 0.0
 
-    ema21 = ema(closes, 21)
-    ema50 = ema(closes, 50)
-    ema200 = ema(closes, 200)
+    e21 = ema(closes, 21)
+    e50 = ema(closes, 50)
+    e200 = ema(closes, 200)
 
-    if ema21 > ema50 > ema200:
+    if e21 > e50 > e200:
         return "bullish", 1.0
-    if ema21 < ema50 < ema200:
+    if e21 < e50 < e200:
         return "bearish", 1.0
-    if ema50 > ema200:
+    if e50 > e200:
         return "bullish", 0.5
-    if ema50 < ema200:
+    if e50 < e200:
         return "bearish", 0.5
 
     return None, 0.0
-
 
 # ==============================
 # BOS
@@ -90,121 +138,85 @@ def detect_bos(highs, lows, closes):
 
     return None, None
 
-
 # ==============================
 # ORDERBLOCK
 # ==============================
-def detect_orderblock(highs, lows, opens, closes, direction, lookback=20):
-    if len(closes) < lookback + 4:
+def detect_orderblock(highs, lows, opens, closes, direction):
+    if len(closes) < 22:
         return None, None, None, 0.0
 
-    start = max(0, len(closes) - lookback)
     best = None
 
-    for i in range(start, len(closes) - 3):
+    for i in range(len(closes) - 20, len(closes) - 2):
         body = abs(opens[i] - closes[i])
-        if body == 0:
+        if body < 0.01:
             continue
 
-        # Bullish OB = letzte rote Kerze vor impulsivem Upmove
         if direction == "bullish" and closes[i] < opens[i]:
             future_high = max(highs[i + 1:i + 4])
-            displacement = future_high - highs[i]
-            if displacement > body * 1.5:
-                strength = min(1.0, displacement / (body * 3))
-                best = (lows[i], highs[i], strength)
+            if (future_high - lows[i]) > body * 2:
+                best = (lows[i], highs[i], 1.0, i)
 
-        # Bearish OB = letzte grüne Kerze vor impulsivem Downmove
         if direction == "bearish" and closes[i] > opens[i]:
             future_low = min(lows[i + 1:i + 4])
-            displacement = lows[i] - future_low
-            if displacement > body * 1.5:
-                strength = min(1.0, displacement / (body * 3))
-                best = (lows[i], highs[i], strength)
+            if (highs[i] - future_low) > body * 2:
+                best = (lows[i], highs[i], 1.0, i)
 
     if best is None:
         return None, None, None, 0.0
 
     return direction, best[0], best[1], best[2]
 
+# ==============================
+# HELPERS
+# ==============================
+def in_entry_zone(price, low, high):
+    if low is None or high is None:
+        return False
+    return low <= price <= high
 
-# ==============================
-# LIQUIDITY SWEEP
-# ==============================
 def liquidity_sweep(highs, lows, closes):
-    if len(highs) < 10 or len(lows) < 10 or len(closes) < 10:
+    if len(highs) < 10:
         return None
-
-    prev_high = max(highs[-10:-1])
-    prev_low = min(lows[-10:-1])
-
-    if highs[-1] > prev_high and closes[-1] < prev_high:
+    if highs[-1] > max(highs[-10:-1]) and closes[-1] < highs[-2]:
         return "bearish"
-
-    if lows[-1] < prev_low and closes[-1] > prev_low:
+    if lows[-1] < min(lows[-10:-1]) and closes[-1] > lows[-2]:
         return "bullish"
-
     return None
 
-
-# ==============================
-# PREMIUM / DISCOUNT
-# ==============================
 def premium_discount(highs, lows, price):
-    if len(highs) < 50 or len(lows) < 50:
-        return "equilibrium"
-
-    high = max(highs[-50:])
-    low = min(lows[-50:])
-
-    if high == low:
-        return "equilibrium"
-
-    pct = (price - low) / (high - low)
-
+    hi = max(highs[-50:])
+    lo = min(lows[-50:])
+    if hi == lo:
+        return "mid"
+    pct = (price - lo) / (hi - lo)
     if pct > 0.65:
         return "premium"
     if pct < 0.35:
         return "discount"
-    return "equilibrium"
-
+    return "mid"
 
 # ==============================
 # ATR
 # ==============================
 def calculate_atr(highs, lows, closes, period=14):
     if len(closes) < period + 1:
-        return 0.0
-
-    trs = []
+        return 2.0
+    tr_list = []
     for i in range(-period, 0):
         tr = max(
             highs[i] - lows[i],
             abs(highs[i] - closes[i - 1]),
             abs(lows[i] - closes[i - 1])
         )
-        trs.append(tr)
-
-    return sum(trs) / len(trs)
-
+        tr_list.append(tr)
+    return sum(tr_list) / len(tr_list)
 
 # ==============================
-# ENTRY ZONE
-# ==============================
-def in_entry_zone(price, ob_low, ob_high):
-    if ob_low is None or ob_high is None:
-        return False
-    return ob_low <= price <= ob_high
-
-
-# ==============================
-# SL / TP
+# SL TP
 # ==============================
 def calculate_sl_tp(direction, price, highs, lows, closes):
     atr_val = calculate_atr(highs, lows, closes)
-
-    min_sl = 0.80
-    max_sl = 5.00
 
     if direction == "bullish":
         raw_sl = min(lows[-10:]) - atr_val * 0.3
@@ -213,162 +225,108 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
         raw_sl = max(highs[-10:]) + atr_val * 0.3
         sl_dist = raw_sl - price
 
-    if sl_dist < min_sl:
-        sl_dist = min_sl
-    if sl_dist > max_sl:
-        sl_dist = max_sl
+    sl_dist = max(MIN_SL, min(MAX_SL, sl_dist))
 
     if direction == "bullish":
         sl = price - sl_dist
-        tp = price + sl_dist * 3.0
+        tp1 = price + sl_dist * 2
+        tp2 = price + sl_dist * 3
     else:
         sl = price + sl_dist
-        tp = price - sl_dist * 3.0
+        tp1 = price - sl_dist * 2
+        tp2 = price - sl_dist * 3
 
-    return round(sl, 2), round(tp, 2)
-
+    return round(sl, 2), round(tp1, 2), round(tp2, 2), round(sl_dist * 100)
 
 # ==============================
-# MAIN SIGNAL
+# SCORE
+# ==============================
+def calculate_score(direction, trend, structure, bos, ob_dir, ob_str, sweep, zone, rsi_val):
+    score = 0.0
+
+    if trend == direction:
+        score += 2
+    if structure == direction:
+        score += 2
+    if bos == direction:
+        score += 2
+    if ob_dir == direction:
+        score += 1.5
+    if sweep == direction:
+        score += 0.5
+
+    return round(score, 1), ["Weighted Sniper Setup"]
+
+# ==============================
+# MAIN
 # ==============================
 def generate_signal(data_m5):
-    if not hasattr(generate_signal, "htf_cache"):
-        generate_signal.htf_cache = (
-            get_candles("15min"),
-            get_candles("1h")
-        )
 
-    data_m15, data_h1 = generate_signal.htf_cache
-
-    if data_m15 is None or data_h1 is None:
+    if not is_active_session():
         return None
 
-    # M5
+    if is_in_cooldown():
+        return None
+
+    htf = get_htf_data()
+    if htf is None:
+        return None
+
+    m15, h1 = htf
+
     c5 = data_m5["close"]
     h5 = data_m5["high"]
     l5 = data_m5["low"]
     o5 = data_m5["open"]
 
-    # M15
-    c15 = data_m15["close"]
-    h15 = data_m15["high"]
-    l15 = data_m15["low"]
-    o15 = data_m15["open"]
+    c15 = m15["close"]
+    h15 = m15["high"]
+    l15 = m15["low"]
+    o15 = m15["open"]
 
-    # H1
-    c_h1 = data_h1["close"]
+    c1 = h1["close"]
 
     price = c5[-1]
 
-    trend, _ = trend_direction(c_h1)
+    trend, _ = trend_direction(c1)
     structure, _ = market_structure(h15, l15)
-    bos, bos_level = detect_bos(h15, l15, c15)
+    bos, _ = detect_bos(h15, l15, c15)
 
-    if trend is None:
-        return None
-
-    # Direction logic
-    direction = None
-
-    if bos is not None:
-        if bos == trend:
-            direction = bos
-        elif structure == bos:
-            direction = bos
-    elif trend == structure and structure != "ranging":
-        direction = trend
-    else:
-        direction = trend  # fallback
-
+    direction = trend if trend == structure else None
     if direction is None:
         return None
 
-    # Orderblock
-    ob_dir, ob_low, ob_high, ob_strength = detect_orderblock(
-        h15, l15, o15, c15, direction
-    )
+    ob_dir, ob_low, ob_high, ob_str = detect_orderblock(h15, l15, o15, c15, direction)
 
-    at_ob = in_entry_zone(price, ob_low, ob_high)
+    if ob_dir is None:
+        return None
 
-    # Confirmations
+    if not in_entry_zone(price, ob_low, ob_high):
+        return None
+
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
     rsi_val = rsi(c5)
 
-    has_retest = False
-    if bos_level is not None:
-        atr_val = calculate_atr(h5, l5, c5)
-        if atr_val > 0 and abs(price - bos_level) <= atr_val:
-            has_retest = True
+    score, parts = calculate_score(
+        direction, trend, structure, bos, ob_dir, ob_str, sweep, zone, rsi_val
+    )
 
-    # ==============================
-    # SMART SNIPER SCORING
-    # ==============================
-    score = 0.0
-
-    if trend == direction:
-        score += 1.5
-
-    if structure == direction:
-        score += 1.5
-    elif structure == "ranging":
-        score += 0.5
-
-    if bos == direction:
-        score += 1.5
-    elif bos is None:
-        score += 0.5
-
-    if ob_dir == direction:
-        score += 1.5 * ob_strength
-
-    if at_ob:
-        score += 2.0
-    else:
-        score -= 1.0
-
-    if has_retest:
-        score += 2.0
-
-    if sweep == direction:
-        score += 1.5
-
-    if direction == "bullish" and zone == "discount":
-        score += 1.0
-    elif direction == "bearish" and zone == "premium":
-        score += 1.0
-
-    if direction == "bullish" and 30 < rsi_val < 60:
-        score += 1.0
-    elif direction == "bearish" and 40 < rsi_val < 70:
-        score += 1.0
-
-    score = round(score, 1)
-
-    # ==============================
-    # ENTRY THRESHOLD
-    # ==============================
-    if score < 3.0:
+    if score < SCORE_THRESHOLD:
         return None
 
-    sl, tp = calculate_sl_tp(direction, price, h5, l5, c5)
+    sl, tp1, tp2, sl_pips = calculate_sl_tp(direction, price, h5, l5, c5)
 
-    if score >= 7.5:
-        confidence = "SNIPER"
-    elif score >= 5.5:
-        confidence = "HIGH"
-    else:
-        confidence = "MODERATE"
+    record_signal()
 
-    signal = {
+    return {
         "direction": "BUY" if direction == "bullish" else "SELL",
         "entry": round(price, 2),
         "sl": sl,
-        "tp": tp,
+        "tp": tp1,
+        "tp2": tp2,
+        "sl_pips": sl_pips,
         "score": score,
-        "confidence": confidence,
-        "notes": "Weighted Sniper Setup"
+        "confidence": "HIGH" if score >= 7 else "MODERATE",
+        "notes": " | ".join(parts),
     }
-
-    log.info("SIGNAL: %s", signal)
-    return signal
