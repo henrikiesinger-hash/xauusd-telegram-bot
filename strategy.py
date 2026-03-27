@@ -536,7 +536,7 @@ def generate_signal(data_m5):
 
     display = "BUY" if direction == "bullish" else "SELL"
 
-    log.info("SIGNAL: %s | Score: %s | Conf: %s", display, score, conf)
+    log.info("SIGNAL: %s)
 
     return {
         "direction": display,
