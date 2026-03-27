@@ -3,4 +3,3 @@ requests
 apscheduler
 gunicorn
 numpy
-pandas
