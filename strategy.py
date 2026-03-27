@@ -75,7 +75,7 @@ def orderblock(highs, lows, opens, closes):
 
 
 # ==============================
-# FIB OTE ZONE 🔥
+# FIBONACCI OTE
 # ==============================
 def fibonacci_ote(highs, lows, direction):
 
@@ -85,7 +85,7 @@ def fibonacci_ote(highs, lows, direction):
     if direction == "bullish":
         fib_62 = swing_high - (swing_high - swing_low) * 0.62
         fib_79 = swing_high - (swing_high - swing_low) * 0.79
-        return fib_79, fib_62  # lower, upper
+        return fib_79, fib_62
 
     else:
         fib_62 = swing_low + (swing_high - swing_low) * 0.62
@@ -94,7 +94,7 @@ def fibonacci_ote(highs, lows, direction):
 
 
 # ==============================
-# ENTRY CHECK 🔥
+# ENTRY ZONE CHECK
 # ==============================
 def in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
 
@@ -105,7 +105,7 @@ def in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
 
 
 # ==============================
-# SL TP
+# SL / TP
 # ==============================
 def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
 
@@ -120,7 +120,7 @@ def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
 
 
 # ==============================
-# MAIN
+# MAIN SIGNAL FUNCTION
 # ==============================
 def generate_signal(data_m5):
 
@@ -162,16 +162,11 @@ def generate_signal(data_m5):
 
     fib_low, fib_high = fibonacci_ote(highs_15, lows_15, direction)
 
-    log.info(f"Trend: {trend} | OB: {ob_dir} | Price: {price} | Fib: {fib_low}-{fib_high}")
+    log.info(f"Trend: {trend} | OB: {ob_dir} | Price: {price}")
 
-    # 🔥 ENTRY FILTER (NEU)
-    if not in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
-        log.info("❌ Not in entry zone")
-        return None
-
-    rsi_value = rsi(closes_5)
-    atr_value = atr(highs_5, lows_5, closes_5)
-
+    # ==============================
+    # SCORE SYSTEM 🔥
+    # ==============================
     score = 0
 
     if trend == direction:
@@ -189,6 +184,14 @@ def generate_signal(data_m5):
     if ob_dir == direction:
         score += 2
 
+    # 🔥 ENTRY ZONE = BONUS (NICHT MEHR BLOCKER)
+    if in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
+        score += 2
+    else:
+        log.info("⚠️ No perfect entry zone")
+
+    rsi_value = rsi(closes_5)
+
     if 40 < rsi_value < 60:
         score += 1
 
@@ -199,9 +202,11 @@ def generate_signal(data_m5):
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
 
+    atr_value = atr(highs_5, lows_5, closes_5)
+
     sl, tp = calculate_sl_tp(direction, price, highs_5, lows_5, atr_value)
 
-    log.info("✅ PRECISION ENTRY SIGNAL")
+    log.info("✅ PRECISION SIGNAL")
 
     return {
         "direction": display_direction,
@@ -209,5 +214,5 @@ def generate_signal(data_m5):
         "sl": sl,
         "tp": tp,
         "score": score,
-        "notes": "OTE + OB Entry"
+        "notes": "Balanced Precision Entry"
     }
