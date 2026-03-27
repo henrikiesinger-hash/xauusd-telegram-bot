@@ -78,7 +78,7 @@ def trend_direction(closes):
 
     if ema21 > ema50 > ema200:
         return "bullish", 1.0
-    if ema21 < ema50 < ema200:
+    if ema21 < ema50:
         return "bearish", 1.0
     if ema50 > ema200:
         return "bullish", 0.5
@@ -512,13 +512,14 @@ def generate_signal(data_m5):
     log.info("Score: %s/10 | %s", score, " | ".join(parts))
 
     # 🔥 ENTRY GATE FIX
-    if score < 5.5:
-        log.info("Score too low - skip")
-        return None
-
-    if not at_ob and score < 7.0:
-        log.info("Not at OB and score < 7 - skip")
-        return None
+    if at_ob:
+        if score < 5.0:
+            log.info("OB entry but score too low - skip")
+            return None
+    else:
+        if score < 6.0:
+            log.info("No OB and score too low - skip")
+            return None
 
     # SL TP
     sl, tp = calculate_sl_tp(direction, price, h5, l5, c5)
