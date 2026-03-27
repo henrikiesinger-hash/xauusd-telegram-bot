@@ -1,5 +1,7 @@
 import requests
 import logging
+logging.basicConfig(level=logging.INFO)
+
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -7,8 +9,6 @@ from config import TELEGRAM_TOKEN, CHAT_ID
 from data import get_candles
 from strategy import generate_signal
 from filters import weekend_filter, session_filter, cooldown_filter, update_signal_time
-
-logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
@@ -23,7 +23,12 @@ def health():
     return {"status": "running"}
 
 
+# ==============================
+# TELEGRAM
+# ==============================
+
 def send_telegram(message):
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     payload = {
@@ -38,7 +43,12 @@ def send_telegram(message):
         logging.error(f"Telegram error: {e}")
 
 
+# ==============================
+# LIVE BOT (wird im Test NICHT benutzt)
+# ==============================
+
 def run_bot():
+
     logging.info("Bot check running...")
 
     if not weekend_filter():
@@ -59,10 +69,6 @@ def run_bot():
         logging.info("No market data")
         return
 
-    if not all(key in data for key in ["open", "high", "low", "close"]):
-        logging.error("❌ Data format invalid (dict keys missing)")
-        return
-
     try:
         signal = generate_signal(data)
     except Exception as e:
@@ -73,51 +79,71 @@ def run_bot():
         logging.info("No valid signal")
         return
 
-    if not all(key in signal for key in ["direction", "entry", "sl", "tp"]):
-        logging.error("❌ Signal missing keys")
-        return
-
-    direction = signal["direction"]
-    entry = signal["entry"]
-    sl = signal["sl"]
-    tp = signal["tp"]
-
-    if direction not in ["BUY", "SELL"]:
-        logging.error("❌ Invalid direction")
-        return
-
-    try:
-        entry = float(entry)
-        sl = float(sl)
-        tp = float(tp)
-    except Exception:
-        logging.error("❌ Entry/SL/TP invalid")
-        return
-
     message = f"""
 🔥 XAUUSD SMART MONEY SIGNAL
 
-Direction: {direction}
-Entry: {entry}
-Stop Loss: {sl}
-Take Profit: {tp}
+Direction: {signal["direction"]}
+Entry: {signal["entry"]}
+Stop Loss: {signal["sl"]}
+Take Profit: {signal["tp"]}
 
-Signal Score: {signal.get("score", "N/A")}/10
-
-Setup:
-{signal.get("notes", "No details")}
+Score: {signal.get("score", "N/A")}/10
 """
 
     send_telegram(message)
     update_signal_time()
 
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(run_bot, "interval", minutes=5, max_instances=1)
-scheduler.start()
+# ==============================
+# 🔥 TEST MODE (BACKTEST)
+# ==============================
 
-run_bot()
+def test_bot():
 
+    logging.info("🔥 START BACKTEST MODE")
+
+    data = get_candles("5min")
+
+    if data is None:
+        logging.info("❌ No data")
+        return
+
+    closes = data["close"]
+    highs = data["high"]
+    lows = data["low"]
+    opens = data["open"]
+
+    logging.info(f"📊 Candles loaded: {len(closes)}")
+
+    signals_found = 0
+
+    for i in range(50, len(closes)):
+
+        slice_data = {
+            "close": closes[:i],
+            "high": highs[:i],
+            "low": lows[:i],
+            "open": opens[:i],
+        }
+
+        try:
+            signal = generate_signal(slice_data)
+        except Exception as e:
+            logging.error(f"❌ Strategy crash at {i}: {e}")
+            continue
+
+        if signal:
+            signals_found += 1
+            logging.info(f"✅ SIGNAL #{signals_found} at index {i}")
+            logging.info(signal)
+
+    logging.info(f"🔥 BACKTEST DONE — Signals found: {signals_found}")
+
+
+# ==============================
+# START SERVER
+# ==============================
 
 if __name__ == "__main__":
+    test_bot()  # 🔥 TEST MODE AKTIV
     app.run(host="0.0.0.0", port=8080)
