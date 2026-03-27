@@ -46,7 +46,7 @@ def market_structure(highs, lows):
 # BOS
 # ==============================
 def break_of_structure(highs, lows, closes):
-    if len(highs) < 20 or len(lows) < 20 or len(closes) < 20:
+    if len(highs) < 20:
         return None, None
 
     prev_high = max(highs[-20:-2])
@@ -66,7 +66,7 @@ def break_of_structure(highs, lows, closes):
 # SWEEP
 # ==============================
 def liquidity_sweep(highs, lows, closes):
-    if len(highs) < 8 or len(lows) < 8 or len(closes) < 8:
+    if len(highs) < 8:
         return None
 
     prev_high = max(highs[-8:-1])
@@ -85,7 +85,7 @@ def liquidity_sweep(highs, lows, closes):
 # ORDERBLOCK
 # ==============================
 def orderblock(highs, lows, opens, closes):
-    if len(opens) < 6 or len(highs) < 6 or len(lows) < 6 or len(closes) < 6:
+    if len(opens) < 6:
         return None, None, None
 
     for i in range(-6, -1):
@@ -99,17 +99,11 @@ def orderblock(highs, lows, opens, closes):
 
 
 # ==============================
-# FIBONACCI OTE
+# FIBONACCI
 # ==============================
 def fibonacci_ote(highs, lows, direction):
-    if len(highs) < 20 or len(lows) < 20:
-        return None, None
-
     swing_high = max(highs[-20:])
     swing_low = min(lows[-20:])
-
-    if swing_high <= swing_low:
-        return None, None
 
     if direction == "bullish":
         fib_62 = swing_high - (swing_high - swing_low) * 0.62
@@ -122,7 +116,7 @@ def fibonacci_ote(highs, lows, direction):
 
 
 # ==============================
-# ENTRY ZONE CHECK
+# ENTRY ZONE
 # ==============================
 def in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
     in_ob = ob_low is not None and ob_high is not None and ob_low <= price <= ob_high
@@ -135,117 +129,74 @@ def in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
 # ==============================
 def find_structure_target(direction, highs_15, lows_15, price):
     if direction == "bullish":
-        candidates = [h for h in highs_15[-40:] if h > price]
-        if not candidates:
-            return None
-        return min(candidates)
+        targets = [h for h in highs_15[-40:] if h > price]
+        return min(targets) if targets else None
 
-    candidates = [l for l in lows_15[-40:] if l < price]
-    if not candidates:
-        return None
-    return max(candidates)
+    targets = [l for l in lows_15[-40:] if l < price]
+    return max(targets) if targets else None
 
 
 # ==============================
-# RR CHOICE
+# SL TP
 # ==============================
-def choose_rr(score, has_zone, ob_dir_match, sweep_match, bos_match):
-    rr = 2.0
-
-    confluence = 0
-    if has_zone:
-        confluence += 1
-    if ob_dir_match:
-        confluence += 1
-    if sweep_match:
-        confluence += 1
-    if bos_match:
-        confluence += 1
-
-    if score >= 8 and confluence >= 3:
-        rr = 3.0
-    elif score >= 7 and confluence >= 2:
-        rr = 2.5
-
-    return rr
-
-
-# ==============================
-# SL / TP WITH MIN RR 2
-# ==============================
-def calculate_sl_tp(direction, price, highs_5, lows_5, highs_15, lows_15, atr_value, rr_target):
-    if len(highs_5) < 10 or len(lows_5) < 10:
-        return None
-
+def calculate_sl_tp(direction, price, highs_5, lows_5, highs_15, lows_15, atr_value):
     if direction == "bullish":
         sl = min(lows_5[-10:]) - atr_value * 0.3
         risk = price - sl
-
         if risk <= 0:
             return None
 
+        tp = price + risk * 2
         structure_tp = find_structure_target(direction, highs_15, lows_15, price)
-        rr_tp = price + (risk * rr_target)
 
-        if structure_tp is not None and structure_tp > price:
-            tp = max(structure_tp, rr_tp)
-        else:
-            tp = rr_tp
+        if structure_tp:
+            tp = max(tp, structure_tp)
 
     else:
         sl = max(highs_5[-10:]) + atr_value * 0.3
         risk = sl - price
-
         if risk <= 0:
             return None
 
+        tp = price - risk * 2
         structure_tp = find_structure_target(direction, highs_15, lows_15, price)
-        rr_tp = price - (risk * rr_target)
 
-        if structure_tp is not None and structure_tp < price:
-            tp = min(structure_tp, rr_tp)
-        else:
-            tp = rr_tp
+        if structure_tp:
+            tp = min(tp, structure_tp)
 
-    real_rr = abs(tp - price) / risk if risk > 0 else 0
+    rr = abs(tp - price) / risk if risk > 0 else 0
 
-    if real_rr < 2.0:
+    if rr < 2:
         return None
 
-    return {
-        "sl": round(sl, 2),
-        "tp": round(tp, 2),
-        "rr": round(real_rr, 2)
-    }
+    return {"sl": round(sl, 2), "tp": round(tp, 2), "rr": round(rr, 2)}
 
 
 # ==============================
-# MAIN SIGNAL FUNCTION
+# MAIN
 # ==============================
 def generate_signal(data_m5):
     if not hasattr(generate_signal, "htf_data"):
-        data_m15 = get_candles("15min")
-        data_h1 = get_candles("1h")
-        generate_signal.htf_data = (data_m15, data_h1)
-    else:
-        data_m15, data_h1 = generate_signal.htf_data
+        generate_signal.htf_data = (
+            get_candles("15min"),
+            get_candles("1h")
+        )
+
+    data_m15, data_h1 = generate_signal.htf_data
 
     if not data_m5 or not data_m15 or not data_h1:
         return None
 
-    opens_5 = data_m5["open"]
     closes_5 = data_m5["close"]
     highs_5 = data_m5["high"]
     lows_5 = data_m5["low"]
+    opens_5 = data_m5["open"]
 
     closes_15 = data_m15["close"]
     highs_15 = data_m15["high"]
     lows_15 = data_m15["low"]
 
     closes_h1 = data_h1["close"]
-
-    if len(closes_5) < 20 or len(closes_15) < 20 or len(closes_h1) < 50:
-        return None
 
     price = closes_5[-1]
 
@@ -263,78 +214,45 @@ def generate_signal(data_m5):
     fib_low, fib_high = fibonacci_ote(highs_15, lows_15, direction)
 
     has_zone = in_entry_zone(price, ob_low, ob_high, fib_low, fib_high)
-    ob_dir_match = ob_dir == direction
-    sweep_match = sweep == direction
-    bos_match = bos == direction
 
-    log.info(
-        f"Trend: {trend} | Structure: {structure} | BOS: {bos} | "
-        f"Sweep: {sweep} | OB: {ob_dir} | Price: {price}"
-    )
-
-    score = 0
-
-    # Trend ist Hauptfilter
-    score += 3
-
-    # Structure
-    if structure == direction:
-        score += 2
-    elif structure == "neutral":
-        score += 1
-
-    # BOS
-    if bos_match:
-        score += 1
-
-    # Sweep
-    if sweep_match:
-        score += 1
-
-    # Orderblock
-    if ob_dir_match:
-        score += 2
-
-    # Entry zone
-    if has_zone:
-        score += 2
-    else:
-        log.info("⚠️ No perfect entry zone")
-
-    # RSI
-    rsi_value = rsi(closes_5)
-
-    if direction == "bullish" and 35 < rsi_value < 60:
-        score += 1
-    elif direction == "bearish" and 40 < rsi_value < 65:
-        score += 1
-
-    log.info(f"Score: {score}")
-
-    if score < SIGNAL_SCORE_THRESHOLD:
+    # ❌ FINAL FILTERS
+    if not has_zone:
         return None
 
+    if ob_dir != direction:
+        return None
+
+    confluence = 0
+    if bos == direction:
+        confluence += 1
+    if sweep == direction:
+        confluence += 1
+    if structure == direction:
+        confluence += 1
+
+    if confluence < 2:
+        return None
+
+    log.info(f"🔥 FINAL FILTER PASSED | Trend: {trend} | OB: {ob_dir} | Confluence: {confluence}")
+
+    score = 5 + confluence
+
     atr_value = atr(highs_5, lows_5, closes_5)
-    rr_target = choose_rr(score, has_zone, ob_dir_match, sweep_match, bos_match)
 
     risk = calculate_sl_tp(
-        direction=direction,
-        price=price,
-        highs_5=highs_5,
-        lows_5=lows_5,
-        highs_15=highs_15,
-        lows_15=lows_15,
-        atr_value=atr_value,
-        rr_target=rr_target
+        direction,
+        price,
+        highs_5,
+        lows_5,
+        highs_15,
+        lows_15,
+        atr_value
     )
 
     if risk is None:
-        log.info("❌ Trade rejected: real RR below 2.0")
         return None
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
-
-    log.info("✅ PHASE 5 SIGNAL")
 
     return {
         "direction": display_direction,
@@ -342,9 +260,5 @@ def generate_signal(data_m5):
         "sl": risk["sl"],
         "tp": risk["tp"],
         "score": score,
-        "notes": (
-            f"Phase 5 Setup | Trend: {trend} | Structure: {structure} | "
-            f"BOS: {bos} | Sweep: {sweep} | OB: {ob_dir} | "
-            f"Zone: {has_zone} | RR: {risk['rr']}"
-        )
+        "notes": f"FINAL SNIPER | RR: {risk['rr']} | Conf: {confluence}"
     }
