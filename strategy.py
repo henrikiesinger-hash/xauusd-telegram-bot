@@ -49,6 +49,7 @@ def liquidity_sweep(highs, lows, closes):
 
 def orderblock(highs, lows, opens, closes):
     for i in range(-5, -1):
+
         if closes[i] < opens[i] and closes[i+1] > highs[i]:
             return "bullish", lows[i], highs[i]
 
@@ -77,12 +78,12 @@ def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
 
 
 # ==============================
-# MAIN SIGNAL FUNCTION
+# MAIN
 # ==============================
 
 def generate_signal(data_m5):
 
-    # 🔥 FIX: HTF DATA CACHE (RICHTIG EINGERÜCKT!)
+    # 🔥 CACHE HTF DATA
     if not hasattr(generate_signal, "htf_data"):
         data_m15 = get_candles("15min")
         data_h1 = get_candles("1h")
@@ -111,31 +112,20 @@ def generate_signal(data_m5):
     structure = market_structure(highs_15, lows_15)
     bos, level = break_of_structure(highs_15, lows_15, closes_15)
 
-    log.info(f"Trend: {trend} | Structure: {structure} | BOS: {bos}")
-
-    if bos is None:
-        log.info("❌ No BOS")
-        return None
-
-    direction = bos
-
     sweep = liquidity_sweep(highs_5, lows_5, closes_5)
     ob_dir, ob_low, ob_high = orderblock(highs_5, lows_5, opens_5, closes_5)
 
-    if sweep != direction:
-        log.info("❌ Sweep mismatch")
+    log.info(f"Trend: {trend} | Structure: {structure} | BOS: {bos} | Sweep: {sweep} | OB: {ob_dir}")
+
+    # ❗ Richtung nur durch Trend + Structure
+    if trend == "neutral":
         return None
 
-    if ob_dir != direction:
-        log.info("❌ OB mismatch")
-        return None
+    direction = trend
 
-    if not price_in_ob(price, ob_low, ob_high):
-        log.info("❌ Price not in OB")
-        return None
-
-    rsi_value = rsi(closes_5)
-    atr_value = atr(highs_5, lows_5, closes_5)
+    # =========================
+    # SCORE SYSTEM 🔥
+    # =========================
 
     score = 0
 
@@ -146,9 +136,18 @@ def generate_signal(data_m5):
         score += 2
 
     if bos == direction:
-        score += 2
+        score += 2  # BOS BONUS
 
-    score += 2
+    if sweep == direction:
+        score += 1  # Sweep BONUS
+
+    if ob_dir == direction:
+        score += 2  # OB wichtig
+
+    if price_in_ob(price, ob_low, ob_high):
+        score += 1  # Entry Qualität
+
+    rsi_value = rsi(closes_5)
 
     if 40 < rsi_value < 60:
         score += 1
@@ -161,6 +160,8 @@ def generate_signal(data_m5):
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
 
+    atr_value = atr(highs_5, lows_5, closes_5)
+
     sl, tp = calculate_sl_tp(direction, price, highs_5, lows_5, atr_value)
 
     log.info("✅ SIGNAL GENERATED")
@@ -171,5 +172,5 @@ def generate_signal(data_m5):
         "sl": sl,
         "tp": tp,
         "score": score,
-        "notes": "Sweep + OB"
+        "notes": f"Trend+Structure+OB setup"
     }
