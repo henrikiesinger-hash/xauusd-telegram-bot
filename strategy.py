@@ -329,18 +329,23 @@ def calculate_score(
     if structure == direction:
         pts = 1.0 + struct_str
         score += pts
-        parts.append(f"Structure +{pts}")
     elif structure == "ranging":
-        parts.append("Structure ranging 0")
+        score += 0.5   # 🔥 NEU
+        parts.append("Structure ranging +0.5")
     else:
-        parts.append("Structure conflict 0")
+        score -= 0.5   # 🔥 leichte Strafe statt 0
+        parts.append("Structure conflict -0.5")
 
     # BOS (max 2.0)
     if bos == direction:
         score += 2.0
         parts.append("BOS +2")
+    elif bos is None:
+        score += 0.5   # 🔥 NEU (WICHTIG!)
+        parts.append("BOS none +0.5")
     else:
-        parts.append(f"BOS {bos} 0")
+        score -= 1.0
+        parts.append("BOS conflict -1")
 
     # Orderblock quality (max 1.5)
     if ob_dir == direction and ob_strength > 0:
