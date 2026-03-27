@@ -2,40 +2,50 @@ import numpy as np
 
 
 def ema(data, period):
+    data = np.array(data)
+    if len(data) < period:
+        return data[-1]
 
     weights = np.exp(np.linspace(-1., 0., period))
     weights /= weights.sum()
 
-    ema = np.convolve(data, weights, mode='valid')
+    a = np.convolve(data, weights, mode='full')[:len(data)]
+    a[:period] = a[period]
 
-    return ema[-1]
+    return a[-1]
 
 
-def rsi(closes, period=14):
+def rsi(data, period=14):
+    data = np.array(data)
 
-    deltas = np.diff(closes)
-    seed = deltas[:period]
+    if len(data) < period + 1:
+        return 50
 
-    up = seed[seed >= 0].sum()/period
-    down = -seed[seed < 0].sum()/period
+    deltas = np.diff(data)
 
-    rs = up/down if down != 0 else 0
+    gains = deltas.clip(min=0)
+    losses = -deltas.clip(max=0)
 
-    rsi = 100 - (100/(1+rs))
+    avg_gain = np.mean(gains[-period:])
+    avg_loss = np.mean(losses[-period:])
 
-    return rsi
+    if avg_loss == 0:
+        return 100
+
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
 
 
 def atr(highs, lows, closes, period=14):
+    highs = np.array(highs)
+    lows = np.array(lows)
+    closes = np.array(closes)
 
-    trs = []
+    if len(closes) < period + 1:
+        return 1
 
-    for i in range(1, len(highs)):
-        tr = max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i-1]),
-            abs(lows[i] - closes[i-1])
-        )
-        trs.append(tr)
+    tr = np.maximum(highs[1:] - lows[1:], 
+         np.maximum(abs(highs[1:] - closes[:-1]), 
+                    abs(lows[1:] - closes[:-1])))
 
-    return sum(trs[-period:]) / period
+    return np.mean(tr[-period:])
