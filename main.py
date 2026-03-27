@@ -9,7 +9,6 @@ from config import TELEGRAM_TOKEN, CHAT_ID
 from data import get_candles
 from strategy import generate_signal
 from filters import weekend_filter, session_filter, cooldown_filter, update_signal_time
-from risk_engine import build_trade
 
 app = Flask(__name__)
 
