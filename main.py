@@ -64,7 +64,6 @@ def run_backtest():
     losses = 0
     total = 0
 
-    # wir starten erst bei 50 Kerzen (sonst zu wenig Daten für Indikatoren)
     for i in range(50, len(data["close"])):
 
         sub_data = {
@@ -99,7 +98,7 @@ def run_backtest():
                 losses += 1
 
     logging.info("====================================")
-    logging.info(f"🔥 BACKTEST DONE")
+    logging.info("🔥 BACKTEST DONE")
     logging.info(f"Total Trades: {total}")
     logging.info(f"Wins: {wins}")
     logging.info(f"Losses: {losses}")
@@ -112,9 +111,15 @@ def run_backtest():
 
 
 # ==============================
-# START
+# AUTO START (WICHTIG 🔥)
+# ==============================
+
+run_backtest()
+
+
+# ==============================
+# SERVER
 # ==============================
 
 if __name__ == "__main__":
-    run_backtest()
     app.run(host="0.0.0.0", port=8080)
