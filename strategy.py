@@ -101,8 +101,16 @@ def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
 
 
 def generate_signal(data_m5):
-    data_m15 = get_candles("15min", 200)
-    data_h1 = get_candles("1h", 200)
+    # 🔥 FIX: nur einmal laden
+if not hasattr(generate_signal, "htf_data"):
+
+    data_m15 = get_candles("15min")
+    data_h1 = get_candles("1h")
+
+    generate_signal.htf_data = (data_m15, data_h1)
+
+else:
+    data_m15, data_h1 = generate_signal.htf_data
 
     if not data_m5 or not data_m15 or not data_h1:
         log.info("❌ Missing candle data")
