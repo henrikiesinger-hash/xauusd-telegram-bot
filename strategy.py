@@ -1,4 +1,4 @@
-import logging
+log.import logging
 from indicators import ema, rsi
 from data import get_candles
 
@@ -444,7 +444,7 @@ def generate_signal(data_m5):
     # BOS
     bos, bos_level = detect_bos(h15, l15, c15)
 
-    log.info(
+    #log.info(
         "Trend: %s (%.1f) | Structure: %s (%.1f) | BOS: %s",
         trend, trend_str, structure, struct_str, bos
     )
@@ -536,7 +536,7 @@ def generate_signal(data_m5):
 
     display = "BUY" if direction == "bullish" else "SELL"
 
-    log.info("SIGNAL: %s)
+    log.info("SIGNAL: %s | Score: %s | Conf: %s", display, score, conf)
 
     return {
         "direction": display,
