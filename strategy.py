@@ -7,56 +7,34 @@ log = logging.getLogger("strategy")
 
 
 def higher_timeframe_trend(closes):
-    ema50 = ema(closes, 50)
-    ema200 = ema(closes, 200)
-
-    if ema50 > ema200:
+    if ema(closes, 50) > ema(closes, 200):
         return "bullish"
-    if ema50 < ema200:
+    elif ema(closes, 50) < ema(closes, 200):
         return "bearish"
     return "neutral"
 
 
 def market_structure(highs, lows):
-    if len(highs) < 20 or len(lows) < 20:
-        return "neutral"
-
-    recent_high = max(highs[-10:])
-    prev_high = max(highs[-20:-10])
-
-    recent_low = min(lows[-10:])
-    prev_low = min(lows[-20:-10])
-
-    if recent_high > prev_high and recent_low > prev_low:
+    if max(highs[-10:]) > max(highs[-20:-10]) and min(lows[-10:]) > min(lows[-20:-10]):
         return "bullish"
-
-    if recent_high < prev_high and recent_low < prev_low:
+    elif max(highs[-10:]) < max(highs[-20:-10]) and min(lows[-10:]) < min(lows[-20:-10]):
         return "bearish"
-
     return "neutral"
 
 
 def break_of_structure(highs, lows, closes):
-    if len(highs) < 20 or len(lows) < 20 or len(closes) < 20:
-        return None, None
-
     prev_high = max(highs[-20:-2])
     prev_low = min(lows[-20:-2])
-    last_close = closes[-1]
 
-    if last_close > prev_high:
+    if closes[-1] > prev_high:
         return "bullish", prev_high
-
-    if last_close < prev_low:
+    elif closes[-1] < prev_low:
         return "bearish", prev_low
 
     return None, None
 
 
 def liquidity_sweep(highs, lows, closes):
-    if len(highs) < 8 or len(lows) < 8 or len(closes) < 8:
-        return None
-
     prev_high = max(highs[-8:-1])
     prev_low = min(lows[-8:-1])
 
@@ -70,26 +48,24 @@ def liquidity_sweep(highs, lows, closes):
 
 
 def orderblock(highs, lows, opens, closes):
-    if len(opens) < 6 or len(highs) < 6 or len(lows) < 6 or len(closes) < 6:
-        return None, None, None
-
     for i in range(-5, -1):
-        if closes[i] < opens[i] and closes[i + 1] > highs[i]:
+        if closes[i] < opens[i] and closes[i+1] > highs[i]:
             return "bullish", lows[i], highs[i]
 
-        if closes[i] > opens[i] and closes[i + 1] < lows[i]:
+        if closes[i] > opens[i] and closes[i+1] < lows[i]:
             return "bearish", lows[i], highs[i]
 
     return None, None, None
 
 
 def price_in_ob(price, ob_low, ob_high):
-    if ob_low is None or ob_high is None:
+    if ob_low is None:
         return False
     return ob_low <= price <= ob_high
 
 
 def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
+
     if direction == "bullish":
         sl = min(lows_5[-10:]) - atr_value * 0.3
         tp = max(highs_5[-20:])
@@ -100,20 +76,22 @@ def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
     return round(sl, 2), round(tp, 2)
 
 
+# ==============================
+# MAIN SIGNAL FUNCTION
+# ==============================
+
 def generate_signal(data_m5):
-    # 🔥 FIX: nur einmal laden
-if not hasattr(generate_signal, "htf_data"):
 
-    data_m15 = get_candles("15min")
-    data_h1 = get_candles("1h")
+    # 🔥 FIX: HTF DATA CACHE (RICHTIG EINGERÜCKT!)
+    if not hasattr(generate_signal, "htf_data"):
+        data_m15 = get_candles("15min")
+        data_h1 = get_candles("1h")
+        generate_signal.htf_data = (data_m15, data_h1)
+    else:
+        data_m15, data_h1 = generate_signal.htf_data
 
-    generate_signal.htf_data = (data_m15, data_h1)
-
-else:
-    data_m15, data_h1 = generate_signal.htf_data
-
-    if not data_m5 or not data_m15 or not data_h1:
-        log.info("❌ Missing candle data")
+    if not data_m15 or not data_h1:
+        log.info("❌ No HTF data")
         return None
 
     opens_5 = data_m5["open"]
@@ -144,18 +122,16 @@ else:
     sweep = liquidity_sweep(highs_5, lows_5, closes_5)
     ob_dir, ob_low, ob_high = orderblock(highs_5, lows_5, opens_5, closes_5)
 
-    log.info(f"Sweep: {sweep} | OB: {ob_dir} | Price: {price}")
-
     if sweep != direction:
         log.info("❌ Sweep mismatch")
         return None
 
     if ob_dir != direction:
-        log.info("❌ Orderblock mismatch")
+        log.info("❌ OB mismatch")
         return None
 
     if not price_in_ob(price, ob_low, ob_high):
-        log.info(f"❌ Price not in OB zone ({ob_low}-{ob_high})")
+        log.info("❌ Price not in OB")
         return None
 
     rsi_value = rsi(closes_5)
@@ -184,6 +160,7 @@ else:
         return None
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
+
     sl, tp = calculate_sl_tp(direction, price, highs_5, lows_5, atr_value)
 
     log.info("✅ SIGNAL GENERATED")
@@ -194,5 +171,5 @@ else:
         "sl": sl,
         "tp": tp,
         "score": score,
-        "notes": f"Sweep + OB Entry | Trend: {trend} | Structure: {structure} | BOS: {bos}"
+        "notes": "Sweep + OB"
     }
