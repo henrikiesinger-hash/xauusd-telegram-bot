@@ -393,7 +393,7 @@ def calculate_score(
 # MAIN SIGNAL GENERATOR
 # ==============================
 def generate_signal(data_m5):
-    # Cache HTF data to avoid API spam in backtests
+
     if not hasattr(generate_signal, "htf_cache"):
         generate_signal.htf_cache = (
             get_candles("15min"),
@@ -423,21 +423,20 @@ def generate_signal(data_m5):
 
     price = c5[-1]
 
-    # Step 1: Range filter on M15
+    # 🔥 RANGE FILTER (LESS STRICT)
     if is_ranging(h15, l15, c15):
-        log.info("Market is ranging - skip")
-        return None
+        log.info("Market slightly ranging - continue with caution")
 
-    # Step 2: H1 trend
+    # H1 TREND
     trend, trend_str = trend_direction(c_h1)
     if trend is None:
         log.info("No H1 trend - skip")
         return None
 
-    # Step 3: M15 structure
+    # M15 STRUCTURE
     structure, struct_str = market_structure(h15, l15)
 
-    # Step 4: M15 BOS
+    # BOS
     bos, bos_level = detect_bos(h15, l15, c15)
 
     log.info(
@@ -445,39 +444,35 @@ def generate_signal(data_m5):
         trend, trend_str, structure, struct_str, bos
     )
 
-    # Step 5: Direction logic
+    # 🔥 FIXED DIRECTION LOGIC
     direction = None
 
-# 🔥 PRIORITY 1: BOS
-if bos is not None:
-    if bos == trend:
-        direction = bos
-    elif structure == bos:
-        direction = bos
+    if bos is not None:
+        if bos == trend:
+            direction = bos
+        elif structure == bos:
+            direction = bos
 
-# 🔥 PRIORITY 2: STRUCTURE
-elif structure == trend and structure != "ranging":
-    direction = trend
+    elif trend == structure and structure != "ranging":
+        direction = trend
 
-# 🔥 PRIORITY 3: TREND ONLY (NEU!)
-elif trend is not None:
-    direction = trend
-    log.info("Using TREND ONLY fallback")
+    # 🔥 NEW FALLBACK (WICHTIGSTER FIX)
+    elif structure == "ranging" and trend is not None:
+        direction = trend
+        log.info("Fallback to trend direction")
 
-# ❌ sonst kein Trade
-if direction is None:
-    log.info("No aligned direction - skip")
-    return None
+    if direction is None:
+        log.info("No aligned direction - skip")
+        return None
 
-    # Step 6: M15 orderblock
+    # ORDERBLOCK
     ob_dir, ob_low, ob_high, ob_strength = detect_orderblock(
         h15, l15, o15, c15, direction
     )
 
-    # Step 7: M5 price at OB
     at_ob = in_entry_zone(price, ob_low, ob_high)
 
-    # Step 8: confirmations
+    # CONFIRMATIONS
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
     rsi_val = rsi(c5)
@@ -493,7 +488,7 @@ if direction is None:
         ob_dir, ob_strength, at_ob, sweep, zone, rsi_val
     )
 
-    # Step 9: score
+    # SCORE
     score, parts = calculate_score(
         direction,
         trend,
@@ -511,24 +506,24 @@ if direction is None:
 
     log.info("Score: %s/10 | %s", score, " | ".join(parts))
 
-    # Step 10: entry gate
-    if score < 6.0:
+    # 🔥 ENTRY GATE FIX
+    if score < 5.5:
         log.info("Score too low - skip")
         return None
 
-    if not at_ob and score < 8.0:
-        log.info("Not at OB and score < 8 - skip")
+    if not at_ob and score < 7.0:
+        log.info("Not at OB and score < 7 - skip")
         return None
 
-    # Step 11: SL / TP
+    # SL TP
     sl, tp = calculate_sl_tp(direction, price, h5, l5, c5)
 
-    # Step 12: confidence
+    # CONFIDENCE
     if score >= 8.5:
         conf = "SNIPER"
     elif score >= 7.0:
         conf = "HIGH"
-    elif score >= 6.0:
+    elif score >= 5.5:
         conf = "MODERATE"
     else:
         conf = "LOW"
@@ -537,6 +532,15 @@ if direction is None:
 
     log.info("SIGNAL: %s | Score: %s | Conf: %s", display, score, conf)
 
+    return {
+        "direction": display,
+        "entry": round(price, 2),
+        "sl": sl,
+        "tp": tp,
+        "score": score,
+        "confidence": conf,
+        "notes": " | ".join(parts)
+    }
     return {
         "direction": display,
         "entry": round(price, 2),
