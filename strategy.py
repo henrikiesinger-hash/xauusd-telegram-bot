@@ -374,5 +374,5 @@ return {
     "score": score,
     "confidence": confidence,
     "notes": " | ".join(breakdown),
-}
+
 ```
