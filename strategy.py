@@ -448,17 +448,26 @@ def generate_signal(data_m5):
     # Step 5: Direction logic
     direction = None
 
-    if bos is not None:
-        if bos == trend:
-            direction = bos
-        elif structure == bos:
-            direction = bos
-    elif trend == structure and structure != "ranging":
-        direction = trend
+# 🔥 PRIORITY 1: BOS
+if bos is not None:
+    if bos == trend:
+        direction = bos
+    elif structure == bos:
+        direction = bos
 
-    if direction is None:
-        log.info("No aligned direction - skip")
-        return None
+# 🔥 PRIORITY 2: STRUCTURE
+elif structure == trend and structure != "ranging":
+    direction = trend
+
+# 🔥 PRIORITY 3: TREND ONLY (NEU!)
+elif trend is not None:
+    direction = trend
+    log.info("Using TREND ONLY fallback")
+
+# ❌ sonst kein Trade
+if direction is None:
+    log.info("No aligned direction - skip")
+    return None
 
     # Step 6: M15 orderblock
     ob_dir, ob_low, ob_high, ob_strength = detect_orderblock(
