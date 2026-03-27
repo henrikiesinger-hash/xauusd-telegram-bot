@@ -110,6 +110,7 @@ def generate_signal(data_m5):
     data_h1 = get_candles("1h", 200)
 
     if not data_m15 or not data_h1:
+        log.info("❌ No HTF data")
         return None
 
     opens_5 = data_m5["open"]
@@ -129,24 +130,30 @@ def generate_signal(data_m5):
     structure = market_structure(highs_15, lows_15)
     bos, level = break_of_structure(highs_15, lows_15, closes_15)
 
+    log.info(f"Trend: {trend} | Structure: {structure} | BOS: {bos}")
+
     if bos is None:
+        log.info("❌ No BOS")
         return None
 
     direction = bos
 
-    # NEW LOGIC
     sweep = liquidity_sweep(highs_5, lows_5, closes_5)
-
     ob_dir, ob_low, ob_high = orderblock(highs_5, lows_5, opens_5, closes_5)
 
+    log.info(f"Sweep: {sweep} | OB: {ob_dir} | Price: {price}")
+
     if sweep != direction:
-        return None  # wartet auf echten Sweep
+        log.info("❌ Sweep mismatch")
+        return None
 
     if ob_dir != direction:
-        return None  # falscher Orderblock
+        log.info("❌ Orderblock mismatch")
+        return None
 
     if not price_in_ob(price, ob_low, ob_high):
-        return None  # wartet auf OB Entry
+        log.info(f"❌ Price not in OB zone ({ob_low}-{ob_high})")
+        return None
 
     rsi_value = rsi(closes_5)
     atr_value = atr(highs_5, lows_5, closes_5)
@@ -162,17 +169,22 @@ def generate_signal(data_m5):
     if bos == direction:
         score += 2
 
-    score += 2  # OB + Sweep Bonus
+    score += 2  # OB + Sweep
 
     if 40 < rsi_value < 60:
         score += 1
 
+    log.info(f"Score: {score}")
+
     if score < SIGNAL_SCORE_THRESHOLD:
+        log.info("❌ Score too low")
         return None
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
 
     sl, tp = calculate_sl_tp(direction, price, highs_5, lows_5, atr_value)
+
+    log.info("✅ SIGNAL GENERATED")
 
     return {
         "direction": display_direction,
@@ -180,5 +192,5 @@ def generate_signal(data_m5):
         "sl": sl,
         "tp": tp,
         "score": score,
-        "notes": f"Sweep + OB Entry | Trend: {trend}"
+        "notes": f"Sweep + OB Entry"
     }
