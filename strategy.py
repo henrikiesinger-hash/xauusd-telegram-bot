@@ -152,19 +152,19 @@ def find_structure_target(direction, highs_15, lows_15, price):
 def choose_rr(score, has_zone, ob_dir_match, sweep_match, bos_match):
     rr = 2.0
 
-    strong_confluence = 0
+    confluence = 0
     if has_zone:
-        strong_confluence += 1
+        confluence += 1
     if ob_dir_match:
-        strong_confluence += 1
+        confluence += 1
     if sweep_match:
-        strong_confluence += 1
+        confluence += 1
     if bos_match:
-        strong_confluence += 1
+        confluence += 1
 
-    if score >= 8 and strong_confluence >= 3:
+    if score >= 8 and confluence >= 3:
         rr = 3.0
-    elif score >= 7 and strong_confluence >= 2:
+    elif score >= 7 and confluence >= 2:
         rr = 2.5
 
     return rr
@@ -274,16 +274,14 @@ def generate_signal(data_m5):
 
     score = 0
 
-    # Trend ist Basis
-    score += 2
+    # Trend ist Hauptfilter
+    score += 3
 
     # Structure
     if structure == direction:
         score += 2
     elif structure == "neutral":
-        score += 0
-    else:
-        score -= 1
+        score += 1
 
     # BOS
     if bos_match:
@@ -296,15 +294,12 @@ def generate_signal(data_m5):
     # Orderblock
     if ob_dir_match:
         score += 2
-    elif ob_dir is not None and ob_dir != direction:
-        score -= 2
 
     # Entry zone
     if has_zone:
         score += 2
     else:
         log.info("⚠️ No perfect entry zone")
-        score -= 2
 
     # RSI
     rsi_value = rsi(closes_5)
@@ -339,7 +334,7 @@ def generate_signal(data_m5):
 
     display_direction = "BUY" if direction == "bullish" else "SELL"
 
-    log.info("✅ FINAL RR SIGNAL")
+    log.info("✅ PHASE 5 SIGNAL")
 
     return {
         "direction": display_direction,
@@ -348,9 +343,8 @@ def generate_signal(data_m5):
         "tp": risk["tp"],
         "score": score,
         "notes": (
-            f"Final RR Setup | Trend: {trend} | Structure: {structure} | "
+            f"Phase 5 Setup | Trend: {trend} | Structure: {structure} | "
             f"BOS: {bos} | Sweep: {sweep} | OB: {ob_dir} | "
             f"Zone: {has_zone} | RR: {risk['rr']}"
         )
     }
-    # force deploy
