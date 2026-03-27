@@ -44,35 +44,50 @@ def break_of_structure(highs, lows, closes):
 
 
 # ==============================
-# ENTRY ZONE (NEU)
+# LIQUIDITY SWEEP (NEU)
 # ==============================
-def entry_zone(direction, price, highs, lows):
+def liquidity_sweep(highs, lows, closes):
+    prev_high = max(highs[-8:-1])
+    prev_low = min(lows[-8:-1])
 
-    high = max(highs[-20:])
-    low = min(lows[-20:])
-    range_size = high - low
+    if highs[-1] > prev_high and closes[-1] < prev_high:
+        return "bearish"
 
-    if direction == "bullish":
-        # Discount Bereich
-        entry_low = high - (range_size * 0.618)
-        entry_high = high - (range_size * 0.5)
-    else:
-        # Premium Bereich
-        entry_low = low + (range_size * 0.5)
-        entry_high = low + (range_size * 0.618)
+    if lows[-1] < prev_low and closes[-1] > prev_low:
+        return "bullish"
 
-    return entry_low, entry_high
+    return None
+
+
+# ==============================
+# ORDERBLOCK (NEU)
+# ==============================
+def orderblock(highs, lows, opens, closes):
+
+    for i in range(-5, -1):
+
+        # bullish OB
+        if closes[i] < opens[i] and closes[i+1] > highs[i]:
+            return "bullish", lows[i], highs[i]
+
+        # bearish OB
+        if closes[i] > opens[i] and closes[i+1] < lows[i]:
+            return "bearish", lows[i], highs[i]
+
+    return None, None, None
 
 
 # ==============================
 # ENTRY CHECK
 # ==============================
-def price_in_zone(price, zone_low, zone_high):
-    return zone_low <= price <= zone_high
+def price_in_ob(price, ob_low, ob_high):
+    if ob_low is None:
+        return False
+    return ob_low <= price <= ob_high
 
 
 # ==============================
-# SL / TP (Structure TP bleibt)
+# SL / TP (STRUCTURE)
 # ==============================
 def calculate_sl_tp(direction, price, highs_5, lows_5, atr_value):
 
@@ -97,6 +112,7 @@ def generate_signal(data_m5):
     if not data_m15 or not data_h1:
         return None
 
+    opens_5 = data_m5["open"]
     closes_5 = data_m5["close"]
     highs_5 = data_m5["high"]
     lows_5 = data_m5["low"]
@@ -118,11 +134,19 @@ def generate_signal(data_m5):
 
     direction = bos
 
-    # ENTRY ZONE
-    zone_low, zone_high = entry_zone(direction, price, highs_15, lows_15)
+    # NEW LOGIC
+    sweep = liquidity_sweep(highs_5, lows_5, closes_5)
 
-    if not price_in_zone(price, zone_low, zone_high):
-        return None  # wartet auf besseren Entry
+    ob_dir, ob_low, ob_high = orderblock(highs_5, lows_5, opens_5, closes_5)
+
+    if sweep != direction:
+        return None  # wartet auf echten Sweep
+
+    if ob_dir != direction:
+        return None  # falscher Orderblock
+
+    if not price_in_ob(price, ob_low, ob_high):
+        return None  # wartet auf OB Entry
 
     rsi_value = rsi(closes_5)
     atr_value = atr(highs_5, lows_5, closes_5)
@@ -138,10 +162,10 @@ def generate_signal(data_m5):
     if bos == direction:
         score += 2
 
+    score += 2  # OB + Sweep Bonus
+
     if 40 < rsi_value < 60:
         score += 1
-
-    score += 1  # Entry Zone Bonus
 
     if score < SIGNAL_SCORE_THRESHOLD:
         return None
@@ -156,5 +180,5 @@ def generate_signal(data_m5):
         "sl": sl,
         "tp": tp,
         "score": score,
-        "notes": f"Zone Entry | Trend: {trend} | BOS: {bos}"
+        "notes": f"Sweep + OB Entry | Trend: {trend}"
     }
