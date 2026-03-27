@@ -1,10 +1,8 @@
-import requests
 import logging
 logging.basicConfig(level=logging.INFO)
 
 from flask import Flask
 
-from config import TELEGRAM_TOKEN, CHAT_ID
 from data import get_candles
 from strategy import generate_signal
 
@@ -13,91 +11,110 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Gold Sniper Bot Running (TEST MODE)"
-
-
-@app.route("/health")
-def health():
-    return {"status": "running"}
+    return "BACKTEST MODE RUNNING"
 
 
 # ==============================
-# TELEGRAM
+# TRADE SIMULATION
 # ==============================
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+def simulate_trade(data, entry_index, direction, entry, sl, tp):
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
+    for i in range(entry_index + 1, len(data["close"])):
 
-    try:
-        response = requests.post(url, data=payload, timeout=10)
-        logging.info(f"Telegram status: {response.status_code}")
-    except Exception as e:
-        logging.error(f"Telegram error: {e}")
+        high = data["high"][i]
+        low = data["low"][i]
+
+        if direction == "BUY":
+
+            if low <= sl:
+                return "LOSS"
+
+            if high >= tp:
+                return "WIN"
+
+        else:  # SELL
+
+            if high >= sl:
+                return "LOSS"
+
+            if low <= tp:
+                return "WIN"
+
+    return "NO RESULT"
 
 
 # ==============================
-# 🔥 TEST MODE (BACKTEST)
+# BACKTEST ENGINE
 # ==============================
 
-def test_bot():
+def run_backtest():
 
     logging.info("🔥 START BACKTEST MODE")
 
     data = get_candles("5min")
 
-    if data is None:
-        logging.info("❌ No data")
+    if not data:
+        logging.error("❌ No data")
         return
 
-    closes = data["close"]
-    highs = data["high"]
-    lows = data["low"]
-    opens = data["open"]
+    logging.info(f"📊 Candles loaded: {len(data['close'])}")
 
-    logging.info(f"📊 Candles loaded: {len(closes)}")
+    wins = 0
+    losses = 0
+    total = 0
 
-    signals_found = 0
+    # wir starten erst bei 50 Kerzen (sonst zu wenig Daten für Indikatoren)
+    for i in range(50, len(data["close"])):
 
-    for i in range(50, len(closes)):
-
-        slice_data = {
-            "close": closes[:i],
-            "high": highs[:i],
-            "low": lows[:i],
-            "open": opens[:i],
+        sub_data = {
+            "open": data["open"][:i],
+            "high": data["high"][:i],
+            "low": data["low"][:i],
+            "close": data["close"][:i]
         }
 
-        try:
-            signal = generate_signal(slice_data)
-        except Exception as e:
-            logging.error(f"❌ Strategy crash at index {i}: {e}")
-            continue
+        signal = generate_signal(sub_data)
 
         if signal:
-            signals_found += 1
 
-            logging.info(f"✅ SIGNAL #{signals_found} at index {i}")
-            logging.info(f"""
-Direction: {signal['direction']}
-Entry: {signal['entry']}
-SL: {signal['sl']}
-TP: {signal['tp']}
-Score: {signal.get('score')}
-""")
+            total += 1
 
-    logging.info(f"🔥 BACKTEST DONE — Signals found: {signals_found}")
+            logging.info(f"📍 SIGNAL {total}: {signal}")
+
+            result = simulate_trade(
+                data,
+                i,
+                signal["direction"],
+                signal["entry"],
+                signal["sl"],
+                signal["tp"]
+            )
+
+            logging.info(f"📊 RESULT: {result}")
+
+            if result == "WIN":
+                wins += 1
+            elif result == "LOSS":
+                losses += 1
+
+    logging.info("====================================")
+    logging.info(f"🔥 BACKTEST DONE")
+    logging.info(f"Total Trades: {total}")
+    logging.info(f"Wins: {wins}")
+    logging.info(f"Losses: {losses}")
+
+    if total > 0:
+        winrate = (wins / total) * 100
+        logging.info(f"Winrate: {round(winrate, 2)}%")
+
+    logging.info("====================================")
 
 
 # ==============================
-# START SERVER + TEST
+# START
 # ==============================
-
-test_bot()  # 🔥 WIRD BEIM START AUTOMATISCH AUSGEFÜHRT
 
 if __name__ == "__main__":
+    run_backtest()
     app.run(host="0.0.0.0", port=8080)
