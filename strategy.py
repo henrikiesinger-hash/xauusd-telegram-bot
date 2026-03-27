@@ -353,3 +353,4 @@ def generate_signal(data_m5):
             f"Zone: {has_zone} | RR: {risk['rr']}"
         )
     }
+    
