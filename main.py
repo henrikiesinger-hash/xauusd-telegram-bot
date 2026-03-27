@@ -5,6 +5,10 @@ from flask import Flask
 
 from data import get_candles
 from strategy import generate_signal
+import strategy
+
+# 🔥 BACKTEST MODE AKTIVIEREN
+strategy.BACKTEST_MODE = True
 
 app = Flask(__name__)
 
@@ -17,7 +21,6 @@ def home():
 # ==============================
 # TRADE SIMULATION
 # ==============================
-
 def simulate_trade(data, entry_index, direction, entry, sl, tp):
 
     for i in range(entry_index + 1, len(data["close"])):
@@ -47,7 +50,6 @@ def simulate_trade(data, entry_index, direction, entry, sl, tp):
 # ==============================
 # BACKTEST ENGINE
 # ==============================
-
 def run_backtest():
 
     logging.info("🔥 START BACKTEST MODE")
@@ -111,15 +113,13 @@ def run_backtest():
 
 
 # ==============================
-# AUTO START (WICHTIG 🔥)
+# AUTO START
 # ==============================
-
 run_backtest()
 
 
 # ==============================
 # SERVER
 # ==============================
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
