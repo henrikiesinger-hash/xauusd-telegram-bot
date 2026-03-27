@@ -70,26 +70,22 @@ def in_entry_zone(price, ob_low, ob_high):
 
 
 # ==============================
-# SL / TP FIX (WICHTIG)
+# SL / TP
 # ==============================
 def calculate_sl_tp(direction, price, highs, lows):
 
     if direction == "bullish":
         sl = min(lows[-10:])
         risk = price - sl
-
         if risk <= 0:
             return None, None
-
         tp = price + (risk * 2)
 
     else:
         sl = max(highs[-10:])
         risk = sl - price
-
         if risk <= 0:
             return None, None
-
         tp = price - (risk * 2)
 
     return round(sl, 2), round(tp, 2)
@@ -114,55 +110,48 @@ def generate_signal(data):
 
     log.info(f"Trend: {trend} | Structure: {structure} | Sweep: {sweep} | OB: {ob_dir} | Price: {price}")
 
-    # ==============================
-    # DIRECTION FIX
-    # ==============================
-    if trend is None:
+    # ❌ FILTER 1: Trend = Structure
+    if trend is None or structure is None:
+        return None
+
+    if trend != structure:
         return None
 
     direction = trend
 
-    # ==============================
-    # ENTRY FILTER (NUR OB)
-    # ==============================
+    # ❌ FILTER 2: OB muss passen
+    if ob_dir != direction:
+        return None
+
+    # ❌ FILTER 3: ENTRY ZONE
     if not in_entry_zone(price, ob_low, ob_high):
-        log.info("❌ No valid OB zone")
         return None
 
     # ==============================
     # CONFLUENCE
     # ==============================
-    confluence = 0
-
-    if structure == direction:
-        confluence += 1
+    confluence = 1  # OB zählt
 
     if sweep == direction:
         confluence += 1
 
-    if ob_dir == direction:
-        confluence += 1
-
-    if confluence < 1:
+    # ❌ FILTER 4: MIN 2 CONF
+    if confluence < 2:
         return None
 
-    log.info(f"🔥 VALID SETUP | Conf: {confluence}")
+    log.info(f"🔥 SNIPER SETUP | Conf: {confluence}")
 
     # ==============================
-    # SL / TP FIX
+    # SL / TP
     # ==============================
     sl, tp = calculate_sl_tp(direction, price, highs, lows)
 
-    if sl is None or tp is None:
-        log.info("❌ Invalid SL/TP")
+    if sl is None:
         return None
 
-    # ==============================
-    # FINAL SIGNAL
-    # ==============================
     display_direction = "BUY" if direction == "bullish" else "SELL"
 
-    log.info("✅ CLEAN SIGNAL")
+    log.info("✅ SNIPER SIGNAL")
 
     return {
         "direction": display_direction,
@@ -170,5 +159,5 @@ def generate_signal(data):
         "sl": sl,
         "tp": tp,
         "score": confluence,
-        "notes": f"Clean OB Entry | RR 2.0 | Conf: {confluence}"
+        "notes": f"Phase 7 Sniper | RR 2.0"
     }
