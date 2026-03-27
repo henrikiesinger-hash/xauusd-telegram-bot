@@ -1,40 +1,35 @@
 import requests
 from config import TWELVE_DATA_KEY, SYMBOL
 
-BASE_URL = "https://api.twelvedata.com/time_series"
 
+def get_candles(interval, limit=200):
 
-def get_candles(interval="5min", limit=200):
+    url = "https://api.twelvedata.com/time_series"
+
     params = {
         "symbol": SYMBOL,
         "interval": interval,
-        "apikey": TWELVE_DATA_KEY,
-        "outputsize": limit
+        "outputsize": limit,
+        "apikey": TWELVE_DATA_KEY
     }
 
     try:
-        r = requests.get(BASE_URL, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=10)
         data = r.json()
+
+        if "values" not in data:
+            print("❌ API error:", data)
+            return None
+
+        values = data["values"][::-1]  # umdrehen (alt → neu)
+
+        return {
+            "open": [float(x["open"]) for x in values],
+            "high": [float(x["high"]) for x in values],
+            "low": [float(x["low"]) for x in values],
+            "close": [float(x["close"]) for x in values],
+        }
+
     except Exception as e:
-        print("API REQUEST ERROR:", e)
+        print("❌ Data error:", e)
         return None
-
-    if "values" not in data:
-        print("API ERROR:", data)
-        return None
-
-    candles = list(reversed(data["values"]))
-
-    opens = [float(c["open"]) for c in candles]
-    highs = [float(c["high"]) for c in candles]
-    lows = [float(c["low"]) for c in candles]
-    closes = [float(c["close"]) for c in candles]
-    times = [c["datetime"] for c in candles]
-
-    return {
-        "open": opens,
-        "high": highs,
-        "low": lows,
-        "close": closes,
-        "time": times
-    }
