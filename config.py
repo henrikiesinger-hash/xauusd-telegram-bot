@@ -6,12 +6,7 @@ TWELVE_DATA_KEY = os.environ.get("TWELVE_DATA_KEY")
 
 SYMBOL = "XAU/USD"
 
-# Score threshold — new scoring is direction-bound (max 11, stricter)
-
-# Old system: 8/10 with inflated scores
-
-# New system: 7/11 means ALL core components align in same direction
-
-SIGNAL_SCORE_THRESHOLD = 7
+# 🔥 NEUE SETTINGS
+SIGNAL_SCORE_THRESHOLD = 6   # vorher zu hoch → jetzt optimal
 
 COOLDOWN_MINUTES = 30
