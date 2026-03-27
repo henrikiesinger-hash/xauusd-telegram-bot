@@ -1,7 +1,6 @@
+import logging
 from indicators import ema, rsi, atr
 from config import SIGNAL_SCORE_THRESHOLD
-from data import get_candles
-import logging
 
 log = logging.getLogger("strategy")
 
@@ -21,15 +20,10 @@ def higher_timeframe_trend(closes):
 # STRUCTURE
 # ==============================
 def market_structure(highs, lows):
-    if len(highs) < 20:
-        return "neutral"
-
     if max(highs[-10:]) > max(highs[-20:-10]) and min(lows[-10:]) > min(lows[-20:-10]):
         return "bullish"
-
-    if max(highs[-10:]) < max(highs[-20:-10]) and min(lows[-10:]) < min(lows[-20:-10]):
+    elif max(highs[-10:]) < max(highs[-20:-10]) and min(lows[-10:]) < min(lows[-20:-10]):
         return "bearish"
-
     return "neutral"
 
 
@@ -37,28 +31,21 @@ def market_structure(highs, lows):
 # BOS
 # ==============================
 def break_of_structure(highs, lows, closes):
-    if len(highs) < 20:
-        return None, None
-
     prev_high = max(highs[-20:-2])
     prev_low = min(lows[-20:-2])
 
     if closes[-1] > prev_high:
-        return "bullish", prev_high
+        return "bullish"
+    elif closes[-1] < prev_low:
+        return "bearish"
 
-    if closes[-1] < prev_low:
-        return "bearish", prev_low
-
-    return None, None
+    return None
 
 
 # ==============================
-# SWEEP
+# LIQUIDITY SWEEP
 # ==============================
 def liquidity_sweep(highs, lows, closes):
-    if len(highs) < 8:
-        return None
-
     prev_high = max(highs[-8:-1])
     prev_low = min(lows[-8:-1])
 
@@ -75,10 +62,9 @@ def liquidity_sweep(highs, lows, closes):
 # ORDERBLOCK
 # ==============================
 def orderblock(highs, lows, opens, closes):
-    if len(opens) < 6:
-        return None, None, None
 
-    for i in range(-6, -1):
+    for i in range(-5, -1):
+
         if closes[i] < opens[i] and closes[i+1] > highs[i]:
             return "bullish", lows[i], highs[i]
 
@@ -89,148 +75,125 @@ def orderblock(highs, lows, opens, closes):
 
 
 # ==============================
-# FIBONACCI
+# FIB ZONE
 # ==============================
-def fibonacci_ote(highs, lows, direction):
+def fib_zone(highs, lows):
+
     high = max(highs[-20:])
     low = min(lows[-20:])
 
-    if direction == "bullish":
-        return high - (high - low) * 0.79, high - (high - low) * 0.62
-    else:
-        return low + (high - low) * 0.62, low + (high - low) * 0.79
+    fib_50 = low + (high - low) * 0.5
+    fib_786 = low + (high - low) * 0.786
+
+    return min(fib_50, fib_786), max(fib_50, fib_786)
 
 
 # ==============================
-# ENTRY ZONE
+# ENTRY ZONE (STRICT)
 # ==============================
 def in_entry_zone(price, ob_low, ob_high, fib_low, fib_high):
+
     in_ob = ob_low and ob_high and ob_low <= price <= ob_high
     in_fib = fib_low <= price <= fib_high
+
     return in_ob or in_fib
 
 
 # ==============================
-# STRUCTURE TP
+# SL / TP (RR 2.0 FIXED)
 # ==============================
-def structure_target(direction, highs, lows, price):
-    if direction == "bullish":
-        targets = [h for h in highs[-40:] if h > price]
-        return min(targets) if targets else None
-    else:
-        targets = [l for l in lows[-40:] if l < price]
-        return max(targets) if targets else None
-
-
-# ==============================
-# SL / TP (RR >= 2)
-# ==============================
-def calculate_sl_tp(direction, price, highs_5, lows_5, highs_15, lows_15, atr_value):
+def calculate_sl_tp(direction, price, highs, lows):
 
     if direction == "bullish":
-        sl = min(lows_5[-10:]) - atr_value * 0.3
+        sl = min(lows[-10:])
         risk = price - sl
-        if risk <= 0:
-            return None
-
-        tp = price + risk * 2
-
-        struct_tp = structure_target(direction, highs_15, lows_15, price)
-        if struct_tp:
-            tp = max(tp, struct_tp)
+        tp = price + (risk * 2)
 
     else:
-        sl = max(highs_5[-10:]) + atr_value * 0.3
+        sl = max(highs[-10:])
         risk = sl - price
-        if risk <= 0:
-            return None
+        tp = price - (risk * 2)
 
-        tp = price - risk * 2
-
-        struct_tp = structure_target(direction, highs_15, lows_15, price)
-        if struct_tp:
-            tp = min(tp, struct_tp)
-
-    rr = abs(tp - price) / risk if risk > 0 else 0
-
-    if rr < 2:
-        return None
-
-    return {"sl": round(sl, 2), "tp": round(tp, 2), "rr": round(rr, 2)}
+    return round(sl, 2), round(tp, 2)
 
 
 # ==============================
-# MAIN
+# MAIN SIGNAL
 # ==============================
-def generate_signal(data_m5):
+def generate_signal(data):
 
-    if not hasattr(generate_signal, "htf"):
-        generate_signal.htf = (get_candles("15min"), get_candles("1h"))
+    closes = data["close"]
+    highs = data["high"]
+    lows = data["low"]
+    opens = data["open"]
 
-    data_m15, data_h1 = generate_signal.htf
+    price = closes[-1]
 
-    if not data_m5 or not data_m15 or not data_h1:
-        return None
+    trend = higher_timeframe_trend(closes)
+    structure = market_structure(highs, lows)
+    bos = break_of_structure(highs, lows, closes)
+    sweep = liquidity_sweep(highs, lows, closes)
+    ob_dir, ob_low, ob_high = orderblock(highs, lows, opens, closes)
+    fib_low, fib_high = fib_zone(highs, lows)
 
-    closes_5 = data_m5["close"]
-    highs_5 = data_m5["high"]
-    lows_5 = data_m5["low"]
-    opens_5 = data_m5["open"]
+    log.info(f"Trend: {trend} | Structure: {structure} | BOS: {bos} | Sweep: {sweep} | OB: {ob_dir} | Price: {price}")
 
-    closes_15 = data_m15["close"]
-    highs_15 = data_m15["high"]
-    lows_15 = data_m15["low"]
-
-    closes_h1 = data_h1["close"]
-
-    price = closes_5[-1]
-
-    trend = higher_timeframe_trend(closes_h1)
-    structure = market_structure(highs_15, lows_15)
-    bos, _ = break_of_structure(highs_15, lows_15, closes_15)
-    sweep = liquidity_sweep(highs_5, lows_5, closes_5)
-
-    if trend == "neutral":
-        return None
-
+    # ==============================
+    # DIRECTION
+    # ==============================
     direction = trend
 
-    ob_dir, ob_low, ob_high = orderblock(highs_5, lows_5, opens_5, closes_5)
-    fib_low, fib_high = fibonacci_ote(highs_15, lows_15, direction)
+    if direction == "neutral":
+        return None
 
+    # ==============================
+    # ENTRY ZONE (HARD FILTER)
+    # ==============================
     has_zone = in_entry_zone(price, ob_low, ob_high, fib_low, fib_high)
 
     if not has_zone:
-        log.info("⚠️ Weak entry (no zone)")
+        log.info("❌ No valid entry zone")
+        return None
 
-    # 🔥 KONFLUENZ
+    # ==============================
+    # CONFLUENCE
+    # ==============================
     confluence = 0
+
     if bos == direction:
         confluence += 1
+
     if sweep == direction:
         confluence += 1
+
     if structure == direction:
         confluence += 1
 
     if confluence == 0:
         return None
 
-    log.info(f"🔥 FILTER PASSED | Conf: {confluence}")
+    log.info(f"🔥 STRONG SETUP | Conf: {confluence}")
 
-    # 🔥 SCORE
-    score = 4 + confluence
+    # ==============================
+    # SCORE
+    # ==============================
+    score = 0
 
-    if ob_dir == direction:
+    score += 2  # Trend
+    score += 2  # Zone
+
+    if bos == direction:
         score += 2
 
-    if has_zone:
+    if sweep == direction:
         score += 2
 
-    rsi_value = rsi(closes_5)
-
-    if direction == "bullish" and 35 < rsi_value < 60:
+    if structure == direction:
         score += 1
-    elif direction == "bearish" and 40 < rsi_value < 65:
+
+    rsi_value = rsi(closes)
+
+    if 40 < rsi_value < 60:
         score += 1
 
     log.info(f"Score: {score}")
@@ -238,28 +201,20 @@ def generate_signal(data_m5):
     if score < SIGNAL_SCORE_THRESHOLD:
         return None
 
-    atr_value = atr(highs_5, lows_5, closes_5)
+    # ==============================
+    # SL / TP
+    # ==============================
+    sl, tp = calculate_sl_tp(direction, price, highs, lows)
 
-    risk = calculate_sl_tp(
-        direction,
-        price,
-        highs_5,
-        lows_5,
-        highs_15,
-        lows_15,
-        atr_value
-    )
+    display_direction = "BUY" if direction == "bullish" else "SELL"
 
-    if risk is None:
-        return None
-
-    log.info("✅ PHASE 6.5 SIGNAL")
+    log.info("✅ PHASE 6.6 SIGNAL")
 
     return {
-        "direction": "BUY" if direction == "bullish" else "SELL",
+        "direction": display_direction,
         "entry": round(price, 2),
-        "sl": risk["sl"],
-        "tp": risk["tp"],
+        "sl": sl,
+        "tp": tp,
         "score": score,
-        "notes": f"Phase 6.5 | RR: {risk['rr']} | Conf: {confluence}"
+        "notes": f"Phase 6.6 | RR: 2.0 | Conf: {confluence}"
     }
