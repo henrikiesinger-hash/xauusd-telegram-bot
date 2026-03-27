@@ -2,32 +2,28 @@ import requests
 from config import TWELVE_DATA_KEY, SYMBOL
 
 
-def get_candles(interval, limit=200):
-
-    url = "https://api.twelvedata.com/time_series"
-
-    params = {
-        "symbol": SYMBOL,
-        "interval": interval,
-        "outputsize": limit,
-        "apikey": TWELVE_DATA_KEY
-    }
-
+def get_candles(interval):
     try:
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
+        url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={interval}&apikey={TWELVE_DATA_KEY}&outputsize=200"
+
+        response = requests.get(url)
+        data = response.json()
 
         if "values" not in data:
-            print("❌ API error:", data)
             return None
 
-        values = data["values"][::-1]  # umdrehen (alt → neu)
+        values = data["values"]
+
+        closes = [float(c["close"]) for c in values][::-1]
+        highs = [float(c["high"]) for c in values][::-1]
+        lows = [float(c["low"]) for c in values][::-1]
+        opens = [float(c["open"]) for c in values][::-1]
 
         return {
-            "open": [float(x["open"]) for x in values],
-            "high": [float(x["high"]) for x in values],
-            "low": [float(x["low"]) for x in values],
-            "close": [float(x["close"]) for x in values],
+            "close": closes,
+            "high": highs,
+            "low": lows,
+            "open": opens
         }
 
     except Exception as e:
