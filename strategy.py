@@ -274,31 +274,39 @@ def generate_signal(data_m5):
 
     score = 0
 
-    if trend == direction:
-        score += 2
+    # Trend ist Basis
+    score += 2
 
+    # Structure
     if structure == direction:
         score += 2
-    elif structure != "neutral":
+    elif structure == "neutral":
+        score += 0
+    else:
         score -= 1
 
+    # BOS
     if bos_match:
         score += 1
 
+    # Sweep
     if sweep_match:
         score += 1
 
+    # Orderblock
     if ob_dir_match:
         score += 2
     elif ob_dir is not None and ob_dir != direction:
-        score -= 1
+        score -= 2
 
+    # Entry zone
     if has_zone:
         score += 2
     else:
         log.info("⚠️ No perfect entry zone")
-        score -= 1
+        score -= 2
 
+    # RSI
     rsi_value = rsi(closes_5)
 
     if direction == "bullish" and 35 < rsi_value < 60:
