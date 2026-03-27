@@ -1,4 +1,4 @@
-from indicators import ema, rsi, at
+from indicators import ema, rsi, atr
 from config import SIGNAL_SCORE_THRESHOLD
 from data import get_candles
 import logging
