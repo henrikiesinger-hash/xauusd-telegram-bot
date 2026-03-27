@@ -6,7 +6,5 @@ TWELVE_DATA_KEY = os.environ.get("TWELVE_DATA_KEY")
 
 SYMBOL = "XAU/USD"
 
-# 🔥 NEUE SETTINGS
-SIGNAL_SCORE_THRESHOLD = 6   # vorher zu hoch → jetzt optimal
-
+SIGNAL_SCORE_THRESHOLD = 6
 COOLDOWN_MINUTES = 30
