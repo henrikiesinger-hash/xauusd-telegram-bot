@@ -13,10 +13,13 @@ def ema(data, period):
     weights = np.exp(np.linspace(-1.0, 0.0, period))
     weights /= weights.sum()
 
-    convolved = np.convolve(data, weights, mode="full")[:len(data)]
-    convolved[:period] = convolved[period]
+    a = np.convolve(data, weights, mode="full")[:len(data)]
 
-    return float(convolved[-1])
+    # 🔥 FIX
+    if len(a) > period:
+        a[:period] = a[period - 1]
+
+    return float(a[-1])
 
 
 def rsi(data, period=14):
