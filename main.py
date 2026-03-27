@@ -151,6 +151,7 @@ Setup:
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_bot, "interval", minutes=5, max_instances=1)
 scheduler.start()
+run_bot()
 
 
 # ==============================
