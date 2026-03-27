@@ -556,4 +556,3 @@ def generate_signal(data_m5):
         "confidence": conf,
         "notes": " | ".join(parts)
     }
-    
