@@ -3,8 +3,8 @@ from config import SIGNAL_SCORE_THRESHOLD, COOLDOWN_MINUTES
 from data import get_candles
 import logging
 
-log = logging.getLogger(“strategy”)
-logging.basicConfig(level=logging.INFO, format=”%(asctime)s | %(name)s | %(message)s”)
+log = logging.getLogger("strategy")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(name)s | %(message)s")
 
 # ============================================================
 
