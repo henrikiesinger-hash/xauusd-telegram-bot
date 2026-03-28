@@ -10,7 +10,7 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = False
-SCORE_THRESHOLD = 6.0  # 🔥 UPDATED
+SCORE_THRESHOLD = 6.0
 COOLDOWN_CANDLES = 24
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
@@ -119,7 +119,7 @@ def market_structure(highs, lows):
     return "ranging", 0.0
 
 # ==============================
-# 🔥 UPDATED TREND
+# TREND
 # ==============================
 
 def trend_direction(closes):
@@ -243,7 +243,7 @@ def calculate_atr(highs, lows, closes, period=14):
     return sum(tr_list) / len(tr_list)
 
 # ==============================
-# 🔥 UPDATED SL/TP
+# SL/TP
 # ==============================
 
 def calculate_sl_tp(direction, price, highs, lows, closes):
@@ -260,7 +260,7 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
         sl = structure_sl + atr_val * 0.3
         sl_dist = sl - price
 
-    sl_dist = max(5.0, min(12.0, sl_dist))  # 🔥 UPDATED
+    sl_dist = max(5.0, min(12.0, sl_dist))
     sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
@@ -372,7 +372,12 @@ def generate_signal(data_m5, candle_index=0):
         True, sweep, zone, rsi_val
     )
 
-    if score < SCORE_THRESHOLD:
+    # 🔥🔥🔥 SMART FILTER (TREND vs COUNTER-TREND)
+    min_score = SCORE_THRESHOLD
+    if structure != direction:
+        min_score = 7.5
+
+    if score < min_score:
         return None
 
     sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
