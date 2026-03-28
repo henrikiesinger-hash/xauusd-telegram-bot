@@ -10,8 +10,8 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = False
-SCORE_THRESHOLD = 5.5
-COOLDOWN_CANDLES = 24  # 🔥 FIXED (war 12)
+SCORE_THRESHOLD = 6.0  # 🔥 UPDATED
+COOLDOWN_CANDLES = 24
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
 
@@ -119,19 +119,19 @@ def market_structure(highs, lows):
     return "ranging", 0.0
 
 # ==============================
-# TREND
+# 🔥 UPDATED TREND
 # ==============================
 
 def trend_direction(closes):
-    if len(closes) < 200:
+    if len(closes) < 50:
         return None
 
+    e21 = ema(closes, 21)
     e50 = ema(closes, 50)
-    e200 = ema(closes, 200)
 
-    if e50 > e200:
+    if e21 > e50:
         return "bullish"
-    if e50 < e200:
+    if e21 < e50:
         return "bearish"
 
     return None
@@ -224,7 +224,7 @@ def premium_discount(highs, lows, price):
     return "mid"
 
 # ==============================
-# ATR + SLTP
+# ATR
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -242,6 +242,10 @@ def calculate_atr(highs, lows, closes, period=14):
 
     return sum(tr_list) / len(tr_list)
 
+# ==============================
+# 🔥 UPDATED SL/TP
+# ==============================
+
 def calculate_sl_tp(direction, price, highs, lows, closes):
     atr_val = calculate_atr(highs, lows, closes)
 
@@ -256,7 +260,7 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
         sl = structure_sl + atr_val * 0.3
         sl_dist = sl - price
 
-    sl_dist = max(4.0, min(12.0, sl_dist))
+    sl_dist = max(5.0, min(12.0, sl_dist))  # 🔥 UPDATED
     sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
@@ -354,7 +358,6 @@ def generate_signal(data_m5, candle_index=0):
     if not (ob_low <= price <= ob_high):
         return None
 
-    # 🔥 FINAL FIX
     global _used_ob
     ob_id = (round(ob_low, 0), round(ob_high, 0))
 
