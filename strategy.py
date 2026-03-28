@@ -156,7 +156,7 @@ def detect_bos(highs, lows, closes):
     return None
 
 # ==============================
-# ORDERBLOCK
+# ORDERBLOCK (LATEST)
 # ==============================
 
 def detect_orderblock(highs, lows, opens, closes, direction):
@@ -357,17 +357,17 @@ def generate_signal(data_m5, candle_index=0):
     structure, struct_str = market_structure(h15, l15)
     bos = detect_bos(h15, l15, c15)
 
+    # 🔥 FIXED DIRECTION
     direction = None
     if bos and bos == trend:
         direction = bos
     elif structure == trend and structure != "ranging":
         direction = trend
+    else:
+        direction = trend
 
     if direction is None:
-        log.info(
-            "BLOCKED: no direction | trend=%s struct=%s bos=%s",
-            trend, structure, bos
-        )
+        log.info("BLOCKED: no direction (no trend)")
         return None
 
     rsi_val = rsi(c5)
