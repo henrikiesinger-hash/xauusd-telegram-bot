@@ -26,7 +26,13 @@ HTF_CACHE_TTL = 300
 # ==============================
 
 def is_active_session():
-    hour = int(time.strftime("%H", time.gmtime()))
+    now = time.gmtime()
+    weekday = now.tm_wday
+    hour = now.tm_hour
+
+    if weekday >= 5:
+        return False
+
     return LONDON_OPEN_UTC <= hour < NY_CLOSE_UTC
 
 # ==============================
@@ -372,7 +378,6 @@ def generate_signal(data_m5, candle_index=0):
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
 
-    # FIX: echte structure + echter bos wieder verwenden
     structure, struct_str = market_structure(h15, l15)
     bos = detect_bos(h15, l15, c15)
 
@@ -393,6 +398,13 @@ def generate_signal(data_m5, candle_index=0):
 
     _used_ob = ob_id
 
+    if score >= 8.5:
+        confidence = "SNIPER"
+    elif score >= 7.0:
+        confidence = "HIGH"
+    else:
+        confidence = "MODERATE"
+
     return {
         "direction": "BUY" if direction == "bullish" else "SELL",
         "entry": round(price, 2),
@@ -400,5 +412,6 @@ def generate_signal(data_m5, candle_index=0):
         "tp": tp,
         "rr": rr,
         "sl_dist": sl_dist,
-        "score": score
+        "score": score,
+        "confidence": confidence
     }
