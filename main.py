@@ -1,214 +1,149 @@
 import logging
-logging.basicConfig(level=logging.INFO)
+import time
+import requests
 
 from flask import Flask
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from data import get_candles
 from strategy import generate_signal
-import strategy
+from config import TELEGRAM_TOKEN, CHAT_ID
 
-strategy.BACKTEST_MODE = True
+
+# ==============================
+# LOGGING
+# ==============================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(message)s"
+)
+
+log = logging.getLogger("main")
+
+
+# ==============================
+# FLASK
+# ==============================
 
 app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
-    return 'BACKTEST MODE'
+    return {"status": "running", "mode": "live"}, 200
 
 
 # ==============================
-# AGGREGATION (M5 → M15 / H1)
+# TELEGRAM
 # ==============================
 
-def aggregate_candles(data, factor):
-    agg = {'open': [], 'high': [], 'low': [], 'close': []}
-    total = len(data['close'])
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        log.error("Telegram credentials missing")
+        return False
 
-    for i in range(0, total - factor + 1, factor):
-        agg['open'].append(data['open'][i])
-        agg['high'].append(max(data['high'][i:i + factor]))
-        agg['low'].append(min(data['low'][i:i + factor]))
-        agg['close'].append(data['close'][i + factor - 1])
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    return agg
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+    }
 
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
 
-# ==============================
-# MOCK HTF DATA (WICHTIG 🔥)
-# ==============================
-
-_htf_store = {'m15': None, 'h1': None}
-
-def mock_get_candles(interval, limit=200):
-    if '15' in interval:
-        return _htf_store['m15']
-    if '1h' in interval or '60' in interval:
-        return _htf_store['h1']
-    return None
-
-
-# ==============================
-# TRADE SIMULATION
-# ==============================
-
-def simulate_trade(data, entry_index, direction, entry, sl, tp):
-
-    for i in range(entry_index + 1, len(data['close'])):
-        high = data['high'][i]
-        low = data['low'][i]
-
-        if direction == 'BUY':
-            if low <= sl:
-                return 'LOSS', round(-(entry - sl), 2)
-            if high >= tp:
-                return 'WIN', round(tp - entry, 2)
-
+        if resp.status_code == 200:
+            log.info("Telegram sent OK")
+            return True
         else:
-            if high >= sl:
-                return 'LOSS', round(-(sl - entry), 2)
-            if low <= tp:
-                return 'WIN', round(entry - tp, 2)
+            log.error("Telegram error: %s", resp.text)
+            return False
 
-    return 'NO RESULT', 0.0
+    except Exception as e:
+        log.error("Telegram failed: %s", e)
+        return False
 
 
 # ==============================
-# BACKTEST ENGINE
+# SIGNAL FORMAT
 # ==============================
 
-def run_backtest():
-    global _htf_store
+def format_signal(signal):
+    direction = signal["direction"]
 
-    logging.info('START BACKTEST')
+    emoji = "🟢" if direction == "BUY" else "🔴"
 
-    # 🔥 WICHTIG: 5000 Candles für echten H1 Trend
-    data = get_candles('5min', 5000)
+    entry = signal["entry"]
+    sl = signal["sl"]
+    tp = signal["tp"]
+    rr = signal.get("rr", "?")
+    sl_dist = signal.get("sl_dist", "?")
+    score = signal.get("score", "?")
+    conf = signal.get("confidence", "N/A")
 
-    if not data:
-        logging.error('No data')
-        return
-
-    total_candles = len(data['close'])
-    logging.info('M5 Candles: %s', total_candles)
-
-    # Build full HTF
-    full_m15 = aggregate_candles(data, 3)
-    full_h1 = aggregate_candles(data, 12)
-
-    logging.info(
-        'M15 Candles: %s | H1 Candles: %s',
-        len(full_m15['close']),
-        len(full_h1['close'])
+    msg = (
+        f"{emoji} <b>XAUUSD {direction} SIGNAL</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Entry: <b>{entry}</b>\n"
+        f"🛑 SL: {sl} (${sl_dist})\n"
+        f"✅ TP: {tp} (RR {rr})\n\n"
+        f"📊 Score: {score}/10\n"
+        f"🔥 Confidence: {conf}\n\n"
+        f"⏰ {time.strftime('%H:%M UTC', time.gmtime())}"
     )
 
-    if len(full_h1['close']) < 210:
-        logging.error('Not enough H1 candles for EMA200')
-        return
-
-    # Patch strategy
-    import strategy as strat_module
-    original_get_candles = strat_module.get_candles
-    strat_module.get_candles = mock_get_candles
-
-    wins = 0
-    losses = 0
-    no_result = 0
-    total = 0
-    total_pnl = 0.0
-
-    # 🔥 Start später → valide Daten
-    start_index = 2500
-
-    for i in range(start_index, total_candles):
-
-        sub_all = {
-            'open': data['open'][:i],
-            'high': data['high'][:i],
-            'low': data['low'][:i],
-            'close': data['close'][:i],
-        }
-
-        m15 = aggregate_candles(sub_all, 3)
-        h1 = aggregate_candles(sub_all, 12)
-
-        if len(h1['close']) < 200 or len(m15['close']) < 50:
-            continue
-
-        _htf_store['m15'] = m15
-        _htf_store['h1'] = h1
-
-        signal = generate_signal(sub_all, candle_index=i)
-
-        if signal:
-            total += 1
-
-            result, pnl = simulate_trade(
-                data, i,
-                signal['direction'],
-                signal['entry'],
-                signal['sl'],
-                signal['tp'],
-            )
-
-            total_pnl += pnl
-
-            logging.info(
-                'TRADE %s: %s @ %.2f | SL:%.2f TP:%.2f RR:%s | Risk:$%.2f | Score:%s | %s ($%.2f)',
-                total,
-                signal['direction'],
-                signal['entry'],
-                signal['sl'],
-                signal['tp'],
-                signal.get('rr', '?'),
-                signal.get('sl_dist', 0),
-                signal.get('score', '?'),
-                result,
-                pnl
-            )
-
-            if result == 'WIN':
-                wins += 1
-            elif result == 'LOSS':
-                losses += 1
-            else:
-                no_result += 1
-
-    # Restore original function
-    strat_module.get_candles = original_get_candles
-
-    logging.info('====================================')
-    logging.info('BACKTEST RESULTS')
-    logging.info('====================================')
-    logging.info(
-        'Candles tested: %s (index %s to %s)',
-        total_candles - start_index,
-        start_index,
-        total_candles
-    )
-    logging.info('Total Trades: %s', total)
-    logging.info('Wins: %s', wins)
-    logging.info('Losses: %s', losses)
-    logging.info('No Result: %s', no_result)
-
-    resolved = wins + losses
-
-    if resolved > 0:
-        winrate = (wins / resolved) * 100
-        logging.info('Winrate: %.1f%% (%s/%s)', winrate, wins, resolved)
-        logging.info('Total PnL: $%.2f', total_pnl)
-
-        avg = total_pnl / resolved
-        logging.info('Avg per trade: $%.2f', avg)
-    else:
-        logging.info('No resolved trades')
-
-    logging.info('====================================')
+    return msg
 
 
 # ==============================
-# START
+# CORE LOGIC
 # ==============================
 
-run_backtest()
+def run_analysis():
+    try:
+        log.info("=== Tick ===")
+
+        data_m5 = get_candles("5min", 200)
+
+        if not data_m5:
+            log.warning("No M5 data")
+            return
+
+        signal = generate_signal(data_m5)
+
+        if signal is None:
+            log.info("No signal")
+            return
+
+        log.info(
+            "SIGNAL: %s @ %s | Score: %s",
+            signal["direction"],
+            signal["entry"],
+            signal.get("score")
+        )
+
+        msg = format_signal(signal)
+        send_telegram(msg)
+
+    except Exception as e:
+        log.error("Analysis failed: %s", e, exc_info=True)
+
+
+# ==============================
+# SCHEDULER
+# ==============================
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(run_analysis, "interval", minutes=5)
+scheduler.start()
+
+log.info("Bot started - Live Mode")
+
+
+# ==============================
+# RUN
+# ==============================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
