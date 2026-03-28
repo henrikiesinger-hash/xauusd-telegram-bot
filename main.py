@@ -40,6 +40,8 @@ def run_backtest():
     logging.info("🔥 START BACKTEST")
 
     data = get_candles("5min", 800)
+    logging.info("Candles: %s", len(data["close"]))
+
 
     wins = 0
     losses = 0
