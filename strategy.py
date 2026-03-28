@@ -156,7 +156,7 @@ def detect_bos(highs, lows, closes):
     return None
 
 # ==============================
-# ORDERBLOCK (FIXED: latest)
+# ORDERBLOCK
 # ==============================
 
 def detect_orderblock(highs, lows, opens, closes, direction):
@@ -189,13 +189,45 @@ def detect_orderblock(highs, lows, opens, closes, direction):
                 if not mitigated:
                     best = (lows[i], highs[i])
 
-    if best is None:
-        return None, None
-
-    return best[0], best[1]
+    return best if best else (None, None)
 
 # ==============================
-# ATR
+# HELPERS
+# ==============================
+
+def liquidity_sweep(highs, lows, closes):
+    if len(highs) < 10:
+        return None
+
+    prev_high = max(highs[-10:-1])
+    prev_low = min(lows[-10:-1])
+
+    if highs[-1] > prev_high and closes[-1] < prev_high:
+        return "bearish"
+
+    if lows[-1] < prev_low and closes[-1] > prev_low:
+        return "bullish"
+
+    return None
+
+def premium_discount(highs, lows, price):
+    hi = max(highs[-50:])
+    lo = min(lows[-50:])
+
+    if hi == lo:
+        return "mid"
+
+    pct = (price - lo) / (hi - lo)
+
+    if pct > 0.65:
+        return "premium"
+    if pct < 0.35:
+        return "discount"
+
+    return "mid"
+
+# ==============================
+# ATR + SLTP
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -213,8 +245,33 @@ def calculate_atr(highs, lows, closes, period=14):
 
     return sum(tr_list) / len(tr_list)
 
+def calculate_sl_tp(direction, price, highs, lows, closes):
+    atr_val = calculate_atr(highs, lows, closes)
+
+    if direction == "bullish":
+        structure_level = min(lows[-15:])
+        raw_sl = structure_level - atr_val * 0.5
+        sl_dist = price - raw_sl
+    else:
+        structure_level = max(highs[-15:])
+        raw_sl = structure_level + atr_val * 0.5
+        sl_dist = raw_sl - price
+
+    sl_dist = max(SL_MIN, min(SL_MAX, sl_dist))
+
+    if direction == "bullish":
+        sl = price - sl_dist
+        tp1 = price + sl_dist * 2
+        tp2 = price + sl_dist * 3
+    else:
+        sl = price + sl_dist
+        tp1 = price - sl_dist * 2
+        tp2 = price - sl_dist * 3
+
+    return round(sl, 2), round(tp1, 2), round(tp2, 2), round(sl_dist, 2)
+
 # ==============================
-# SCORE SYSTEM
+# SCORE
 # ==============================
 
 def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, zone, rsi_val):
@@ -222,22 +279,18 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
     parts = []
 
     if trend == direction:
-        score += 2.0
+        score += 2
         parts.append("Trend +2")
     else:
-        score -= 1.0
-        parts.append("Trend AGAINST -1")
+        score -= 1
 
     if structure == direction:
-        pts = 1.0 + struct_str
+        pts = 1 + struct_str
         score += pts
         parts.append("Struct +" + str(pts))
-    elif structure != "ranging":
-        score -= 1.0
-        parts.append("Struct AGAINST -1")
 
     if bos == direction:
-        score += 2.0
+        score += 2
         parts.append("BOS +2")
 
     if at_ob:
@@ -248,25 +301,20 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
         score += 0.5
         parts.append("Sweep +0.5")
 
-    good_zone = (
-        (direction == "bullish" and zone == "discount") or
-        (direction == "bearish" and zone == "premium")
-    )
-    if good_zone:
+    if direction == "bullish" and zone == "discount":
         score += 0.5
-        parts.append("Zone +0.5")
+    if direction == "bearish" and zone == "premium":
+        score += 0.5
 
     if direction == "bullish" and 30 < rsi_val < 55:
         score += 0.5
-        parts.append("RSI +0.5")
-    elif direction == "bearish" and 45 < rsi_val < 70:
+    if direction == "bearish" and 45 < rsi_val < 70:
         score += 0.5
-        parts.append("RSI +0.5")
 
-    return max(0.0, round(score, 1)), parts
+    return round(score, 1), parts
 
 # ==============================
-# MAIN SIGNAL (WITH DEBUG)
+# MAIN
 # ==============================
 
 def generate_signal(data_m5, candle_index=0):
@@ -284,18 +332,10 @@ def generate_signal(data_m5, candle_index=0):
             log.info("BLOCKED: cooldown")
             return None
 
-    if BACKTEST_MODE:
-        m15 = get_candles("15min")
-        h1 = get_candles("1h")
-        if not m15 or not h1:
-            log.info("BLOCKED: no HTF")
-            return None
-    else:
-        htf = get_htf_data()
-        if htf is None:
-            log.info("BLOCKED: HTF cache")
-            return None
-        m15, h1 = htf
+    m15 = get_candles("15min")
+    h1 = get_candles("1h")
+    if not m15 or not h1:
+        return None
 
     c5 = data_m5["close"]
     h5 = data_m5["high"]
@@ -324,7 +364,10 @@ def generate_signal(data_m5, candle_index=0):
         direction = trend
 
     if direction is None:
-        log.info("BLOCKED: no direction")
+        log.info(
+            "BLOCKED: no direction | trend=%s struct=%s bos=%s",
+            trend, structure, bos
+        )
         return None
 
     rsi_val = rsi(c5)
@@ -337,6 +380,7 @@ def generate_signal(data_m5, candle_index=0):
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
+
     if ob_low is None:
         log.info("BLOCKED: no OB")
         return None
