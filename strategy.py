@@ -11,7 +11,7 @@ log = logging.getLogger("strategy")
 
 BACKTEST_MODE = False
 SCORE_THRESHOLD = 4.0
-COOLDOWN_CANDLES = 12
+COOLDOWN_CANDLES = 24  # 🔥 FIXED (war 12)
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
 
@@ -224,7 +224,7 @@ def premium_discount(highs, lows, price):
     return "mid"
 
 # ==============================
-# ATR
+# ATR + SLTP
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -242,26 +242,21 @@ def calculate_atr(highs, lows, closes, period=14):
 
     return sum(tr_list) / len(tr_list)
 
-# ==============================
-# NEW SL / TP
-# ==============================
-
 def calculate_sl_tp(direction, price, highs, lows, closes):
     atr_val = calculate_atr(highs, lows, closes)
 
     if direction == "bullish":
-        swing_lows = find_swing_lows(lows, left=3, right=3)
+        swing_lows = find_swing_lows(lows, 3, 3)
         structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
         sl = structure_sl - atr_val * 0.3
         sl_dist = price - sl
     else:
-        swing_highs = find_swing_highs(highs, left=3, right=3)
+        swing_highs = find_swing_highs(highs, 3, 3)
         structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
         sl = structure_sl + atr_val * 0.3
         sl_dist = sl - price
 
     sl_dist = max(4.0, min(12.0, sl_dist))
-
     sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
@@ -342,13 +337,7 @@ def generate_signal(data_m5, candle_index=0):
     structure, struct_str = market_structure(h15, l15)
     bos = detect_bos(h15, l15, c15)
 
-    # 🔥 FIXED DIRECTION (TREND FALLBACK)
-    if bos and bos == trend:
-        direction = bos
-    elif structure == trend and structure != "ranging":
-        direction = trend
-    else:
-        direction = trend
+    direction = trend
 
     rsi_val = rsi(c5)
 
@@ -365,14 +354,13 @@ def generate_signal(data_m5, candle_index=0):
     if not (ob_low <= price <= ob_high):
         return None
 
-    # 🔥🔥🔥 OB TRACKER (NEU)
+    # 🔥 FINAL FIX
     global _used_ob
-    ob_id = (round(ob_low, 2), round(ob_high, 2))
+    ob_id = (round(ob_low, 0), round(ob_high, 0))
 
     if ob_id == _used_ob:
         return None
 
-    # Confirmations
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
 
@@ -386,13 +374,11 @@ def generate_signal(data_m5, candle_index=0):
 
     sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
 
-    # 🔥 COOLDOWN + OB SAVE
     if BACKTEST_MODE:
         record_signal_backtest(candle_index)
     else:
         record_signal_live()
 
-    # 🔥🔥🔥 OB ALS "VERBRAUCHT" MARKIEREN
     _used_ob = ob_id
 
     return {
