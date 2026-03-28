@@ -68,7 +68,7 @@ def simulate_trade(data, entry_index, direction, entry, sl, tp1, tp2):
 def run_backtest():
     logging.info("🔥 START BACKTEST")
 
-    data = get_candles("5min")
+    data = get_candles("5min", 800)
 
     if not data:
         logging.error("❌ No data")
