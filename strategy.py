@@ -10,7 +10,7 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = False
-SCORE_THRESHOLD = 6.0
+SCORE_THRESHOLD = 5.5
 COOLDOWN_CANDLES = 24
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
@@ -123,15 +123,15 @@ def market_structure(highs, lows):
 # ==============================
 
 def trend_direction(closes):
-    if len(closes) < 50:
+    if len(closes) < 200:
         return None
 
-    e21 = ema(closes, 21)
     e50 = ema(closes, 50)
+    e200 = ema(closes, 200)
 
-    if e21 > e50:
+    if e50 > e200:
         return "bullish"
-    if e21 < e50:
+    if e50 < e200:
         return "bearish"
 
     return None
@@ -165,7 +165,6 @@ def detect_orderblock(highs, lows, opens, closes, direction):
     best = None
 
     for i in range(len(closes) - 20, len(closes) - 2):
-
         body = abs(opens[i] - closes[i])
         if body < 0.01:
             continue
@@ -285,19 +284,29 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
 def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, zone, rsi_val):
     score = 0
 
-    if trend == direction: score += 2
-    else: score -= 1
+    if trend == direction:
+        score += 2
+    else:
+        score -= 1
 
-    if structure == direction: score += 1 + struct_str
-    if bos == direction: score += 2
-    if at_ob: score += 1.5
-    if sweep == direction: score += 0.5
+    if structure == direction:
+        score += 1 + struct_str
+    if bos == direction:
+        score += 2
+    if at_ob:
+        score += 1.5
+    if sweep == direction:
+        score += 0.5
 
-    if direction == "bullish" and zone == "discount": score += 0.5
-    if direction == "bearish" and zone == "premium": score += 0.5
+    if direction == "bullish" and zone == "discount":
+        score += 0.5
+    if direction == "bearish" and zone == "premium":
+        score += 0.5
 
-    if direction == "bullish" and 30 < rsi_val < 55: score += 0.5
-    if direction == "bearish" and 45 < rsi_val < 70: score += 0.5
+    if direction == "bullish" and 30 < rsi_val < 55:
+        score += 0.5
+    if direction == "bearish" and 45 < rsi_val < 70:
+        score += 0.5
 
     return round(score, 1)
 
@@ -306,7 +315,6 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
 # ==============================
 
 def generate_signal(data_m5, candle_index=0):
-
     if not BACKTEST_MODE and not is_active_session():
         return None
 
@@ -338,9 +346,6 @@ def generate_signal(data_m5, candle_index=0):
     if trend is None:
         return None
 
-    structure, struct_str = market_structure(h15, l15)
-    bos = detect_bos(h15, l15, c15)
-
     direction = trend
 
     rsi_val = rsi(c5)
@@ -367,17 +372,16 @@ def generate_signal(data_m5, candle_index=0):
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
 
+    # FIX: echte structure + echter bos wieder verwenden
+    structure, struct_str = market_structure(h15, l15)
+    bos = detect_bos(h15, l15, c15)
+
     score = calculate_score(
         direction, trend, structure, struct_str, bos,
         True, sweep, zone, rsi_val
     )
 
-    # 🔥🔥🔥 SMART FILTER (TREND vs COUNTER-TREND)
-    min_score = SCORE_THRESHOLD
-    if structure != direction:
-        min_score = 7.5
-
-    if score < min_score:
+    if score < SCORE_THRESHOLD:
         return None
 
     sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
