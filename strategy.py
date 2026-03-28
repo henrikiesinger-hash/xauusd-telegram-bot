@@ -17,6 +17,7 @@ NY_CLOSE_UTC = 21
 
 _last_signal_time = 0
 _last_signal_candle = -999
+_used_ob = None
 _htf_cache = {"data": None, "ts": 0}
 HTF_CACHE_TTL = 300
 
