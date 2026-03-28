@@ -341,7 +341,13 @@ def generate_signal(data_m5, candle_index=0):
     structure, struct_str = market_structure(h15, l15)
     bos = detect_bos(h15, l15, c15)
 
-    direction = trend
+    # 🔥 FIXED DIRECTION (TREND FALLBACK)
+    if bos and bos == trend:
+        direction = bos
+    elif structure == trend and structure != "ranging":
+        direction = trend
+    else:
+        direction = trend
 
     rsi_val = rsi(c5)
 
@@ -351,23 +357,42 @@ def generate_signal(data_m5, candle_index=0):
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
-    if ob_low is None or not (ob_low <= price <= ob_high):
+
+    if ob_low is None:
         return None
 
+    if not (ob_low <= price <= ob_high):
+        return None
+
+    # 🔥🔥🔥 OB TRACKER (NEU)
+    global _used_ob
+    ob_id = (round(ob_low, 2), round(ob_high, 2))
+
+    if ob_id == _used_ob:
+        return None
+
+    # Confirmations
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
 
-    score = calculate_score(direction, trend, structure, struct_str, bos, True, sweep, zone, rsi_val)
+    score = calculate_score(
+        direction, trend, structure, struct_str, bos,
+        True, sweep, zone, rsi_val
+    )
 
     if score < SCORE_THRESHOLD:
         return None
 
     sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
 
+    # 🔥 COOLDOWN + OB SAVE
     if BACKTEST_MODE:
         record_signal_backtest(candle_index)
     else:
         record_signal_live()
+
+    # 🔥🔥🔥 OB ALS "VERBRAUCHT" MARKIEREN
+    _used_ob = ob_id
 
     return {
         "direction": "BUY" if direction == "bullish" else "SELL",
