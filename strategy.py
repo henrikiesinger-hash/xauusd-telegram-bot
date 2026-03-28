@@ -14,8 +14,6 @@ SCORE_THRESHOLD = 4.0
 COOLDOWN_CANDLES = 12
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
-SL_MIN = 4.00
-SL_MAX = 8.00
 
 _last_signal_time = 0
 _last_signal_candle = -999
@@ -156,7 +154,7 @@ def detect_bos(highs, lows, closes):
     return None
 
 # ==============================
-# ORDERBLOCK (LATEST)
+# ORDERBLOCK
 # ==============================
 
 def detect_orderblock(highs, lows, opens, closes, direction):
@@ -174,7 +172,6 @@ def detect_orderblock(highs, lows, opens, closes, direction):
         if direction == "bullish" and closes[i] < opens[i]:
             future_high = max(highs[i + 1:i + 4])
             displacement = future_high - lows[i]
-
             if displacement > body * 2:
                 mitigated = any(closes[j] < lows[i] for j in range(i + 1, len(closes)))
                 if not mitigated:
@@ -183,7 +180,6 @@ def detect_orderblock(highs, lows, opens, closes, direction):
         if direction == "bearish" and closes[i] > opens[i]:
             future_low = min(lows[i + 1:i + 4])
             displacement = highs[i] - future_low
-
             if displacement > body * 2:
                 mitigated = any(closes[j] > highs[i] for j in range(i + 1, len(closes)))
                 if not mitigated:
@@ -227,7 +223,7 @@ def premium_discount(highs, lows, price):
     return "mid"
 
 # ==============================
-# ATR + SLTP
+# ATR
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -245,73 +241,65 @@ def calculate_atr(highs, lows, closes, period=14):
 
     return sum(tr_list) / len(tr_list)
 
+# ==============================
+# NEW SL / TP
+# ==============================
+
 def calculate_sl_tp(direction, price, highs, lows, closes):
     atr_val = calculate_atr(highs, lows, closes)
 
     if direction == "bullish":
-        structure_level = min(lows[-15:])
-        raw_sl = structure_level - atr_val * 0.5
-        sl_dist = price - raw_sl
+        swing_lows = find_swing_lows(lows, left=3, right=3)
+        structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
+        sl = structure_sl - atr_val * 0.3
+        sl_dist = price - sl
     else:
-        structure_level = max(highs[-15:])
-        raw_sl = structure_level + atr_val * 0.5
-        sl_dist = raw_sl - price
+        swing_highs = find_swing_highs(highs, left=3, right=3)
+        structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
+        sl = structure_sl + atr_val * 0.3
+        sl_dist = sl - price
 
-    sl_dist = max(SL_MIN, min(SL_MAX, sl_dist))
+    sl_dist = max(4.0, min(12.0, sl_dist))
+
+    sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
-        sl = price - sl_dist
-        tp1 = price + sl_dist * 2
-        tp2 = price + sl_dist * 3
+        targets = [s[1] for s in find_swing_highs(highs, 3, 3) if s[1] > price]
+        tp_dist = min(targets) - price if targets else sl_dist * 3
     else:
-        sl = price + sl_dist
-        tp1 = price - sl_dist * 2
-        tp2 = price - sl_dist * 3
+        targets = [s[1] for s in find_swing_lows(lows, 3, 3) if s[1] < price]
+        tp_dist = price - max(targets) if targets else sl_dist * 3
 
-    return round(sl, 2), round(tp1, 2), round(tp2, 2), round(sl_dist, 2)
+    if tp_dist < sl_dist * 2:
+        tp_dist = sl_dist * 2
+
+    tp = price + tp_dist if direction == "bullish" else price - tp_dist
+    rr = round(tp_dist / sl_dist, 1)
+
+    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr
 
 # ==============================
 # SCORE
 # ==============================
 
 def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, zone, rsi_val):
-    score = 0.0
-    parts = []
+    score = 0
 
-    if trend == direction:
-        score += 2
-        parts.append("Trend +2")
-    else:
-        score -= 1
+    if trend == direction: score += 2
+    else: score -= 1
 
-    if structure == direction:
-        pts = 1 + struct_str
-        score += pts
-        parts.append("Struct +" + str(pts))
+    if structure == direction: score += 1 + struct_str
+    if bos == direction: score += 2
+    if at_ob: score += 1.5
+    if sweep == direction: score += 0.5
 
-    if bos == direction:
-        score += 2
-        parts.append("BOS +2")
+    if direction == "bullish" and zone == "discount": score += 0.5
+    if direction == "bearish" and zone == "premium": score += 0.5
 
-    if at_ob:
-        score += 1.5
-        parts.append("OB +1.5")
+    if direction == "bullish" and 30 < rsi_val < 55: score += 0.5
+    if direction == "bearish" and 45 < rsi_val < 70: score += 0.5
 
-    if sweep == direction:
-        score += 0.5
-        parts.append("Sweep +0.5")
-
-    if direction == "bullish" and zone == "discount":
-        score += 0.5
-    if direction == "bearish" and zone == "premium":
-        score += 0.5
-
-    if direction == "bullish" and 30 < rsi_val < 55:
-        score += 0.5
-    if direction == "bearish" and 45 < rsi_val < 70:
-        score += 0.5
-
-    return round(score, 1), parts
+    return round(score, 1)
 
 # ==============================
 # MAIN
@@ -320,16 +308,13 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
 def generate_signal(data_m5, candle_index=0):
 
     if not BACKTEST_MODE and not is_active_session():
-        log.info("BLOCKED: outside session")
         return None
 
     if BACKTEST_MODE:
         if is_in_cooldown_backtest(candle_index):
-            log.info("BLOCKED: cooldown")
             return None
     else:
         if is_in_cooldown_live():
-            log.info("BLOCKED: cooldown")
             return None
 
     m15 = get_candles("15min")
@@ -351,77 +336,45 @@ def generate_signal(data_m5, candle_index=0):
 
     trend = trend_direction(c1)
     if trend is None:
-        log.info("BLOCKED: no trend")
         return None
 
     structure, struct_str = market_structure(h15, l15)
     bos = detect_bos(h15, l15, c15)
 
-    # 🔥 FIXED DIRECTION
-    direction = None
-    if bos and bos == trend:
-        direction = bos
-    elif structure == trend and structure != "ranging":
-        direction = trend
-    else:
-        direction = trend
-
-    if direction is None:
-        log.info("BLOCKED: no direction (no trend)")
-        return None
+    direction = trend
 
     rsi_val = rsi(c5)
 
     if direction == "bullish" and rsi_val > 60:
-        log.info("BLOCKED: RSI high")
         return None
     if direction == "bearish" and rsi_val < 40:
-        log.info("BLOCKED: RSI low")
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
-
-    if ob_low is None:
-        log.info("BLOCKED: no OB")
-        return None
-
-    if not (ob_low <= price <= ob_high):
-        log.info("BLOCKED: not in OB")
+    if ob_low is None or not (ob_low <= price <= ob_high):
         return None
 
     sweep = liquidity_sweep(h5, l5, c5)
     zone = premium_discount(h15, l15, price)
 
-    score, parts = calculate_score(
-        direction, trend, structure, struct_str, bos,
-        True, sweep, zone, rsi_val
-    )
-
-    log.info("CHECK: %.2f %s score %.1f | %s", price, direction, score, " | ".join(parts))
+    score = calculate_score(direction, trend, structure, struct_str, bos, True, sweep, zone, rsi_val)
 
     if score < SCORE_THRESHOLD:
-        log.info("BLOCKED: score too low")
         return None
 
-    sl, tp1, tp2, sl_dist = calculate_sl_tp(direction, price, h5, l5, c5)
-
-    display = "BUY" if direction == "bullish" else "SELL"
+    sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
 
     if BACKTEST_MODE:
         record_signal_backtest(candle_index)
     else:
         record_signal_live()
 
-    log.info("SIGNAL: %s @ %.2f", display, price)
-
     return {
-        "direction": display,
+        "direction": "BUY" if direction == "bullish" else "SELL",
         "entry": round(price, 2),
         "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
+        "tp": tp,
+        "rr": rr,
         "sl_dist": sl_dist,
-        "score": score,
-        "confidence": "SNIPER" if score >= 8.5 else "HIGH" if score >= 7 else "MODERATE",
-        "notes": " | ".join(parts),
+        "score": score
     }
