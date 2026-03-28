@@ -10,79 +10,203 @@ strategy.BACKTEST_MODE = True
 
 app = Flask(__name__)
 
-@app.route("/")
+@app.route('/')
 def home():
-    return "BACKTEST MODE"
+    return 'BACKTEST MODE'
+
+
+# ==============================
+# AGGREGATION (M5 → M15 / H1)
+# ==============================
+
+def aggregate_candles(data, factor):
+    agg = {'open': [], 'high': [], 'low': [], 'close': []}
+    total = len(data['close'])
+
+    for i in range(0, total - factor + 1, factor):
+        agg['open'].append(data['open'][i])
+        agg['high'].append(max(data['high'][i:i + factor]))
+        agg['low'].append(min(data['low'][i:i + factor]))
+        agg['close'].append(data['close'][i + factor - 1])
+
+    return agg
+
+
+# ==============================
+# MOCK HTF DATA (WICHTIG 🔥)
+# ==============================
+
+_htf_store = {'m15': None, 'h1': None}
+
+def mock_get_candles(interval, limit=200):
+    if '15' in interval:
+        return _htf_store['m15']
+    if '1h' in interval or '60' in interval:
+        return _htf_store['h1']
+    return None
+
+
+# ==============================
+# TRADE SIMULATION
+# ==============================
 
 def simulate_trade(data, entry_index, direction, entry, sl, tp):
 
-    for i in range(entry_index + 1, len(data["close"])):
+    for i in range(entry_index + 1, len(data['close'])):
+        high = data['high'][i]
+        low = data['low'][i]
 
-        high = data["high"][i]
-        low = data["low"][i]
-
-        if direction == "BUY":
+        if direction == 'BUY':
             if low <= sl:
-                return "LOSS"
+                return 'LOSS', round(-(entry - sl), 2)
             if high >= tp:
-                return "WIN"
+                return 'WIN', round(tp - entry, 2)
 
         else:
             if high >= sl:
-                return "LOSS"
+                return 'LOSS', round(-(sl - entry), 2)
             if low <= tp:
-                return "WIN"
+                return 'WIN', round(entry - tp, 2)
 
-    return "NO RESULT"
+    return 'NO RESULT', 0.0
+
+
+# ==============================
+# BACKTEST ENGINE
+# ==============================
 
 def run_backtest():
+    global _htf_store
 
-    logging.info("🔥 START BACKTEST")
+    logging.info('START BACKTEST')
 
-    data = get_candles("5min", 800)
-    logging.info("Candles: %s", len(data["close"]))
+    # 🔥 WICHTIG: 5000 Candles für echten H1 Trend
+    data = get_candles('5min', 5000)
 
+    if not data:
+        logging.error('No data')
+        return
+
+    total_candles = len(data['close'])
+    logging.info('M5 Candles: %s', total_candles)
+
+    # Build full HTF
+    full_m15 = aggregate_candles(data, 3)
+    full_h1 = aggregate_candles(data, 12)
+
+    logging.info(
+        'M15 Candles: %s | H1 Candles: %s',
+        len(full_m15['close']),
+        len(full_h1['close'])
+    )
+
+    if len(full_h1['close']) < 210:
+        logging.error('Not enough H1 candles for EMA200')
+        return
+
+    # Patch strategy
+    import strategy as strat_module
+    original_get_candles = strat_module.get_candles
+    strat_module.get_candles = mock_get_candles
 
     wins = 0
     losses = 0
+    no_result = 0
     total = 0
+    total_pnl = 0.0
 
-    for i in range(50, len(data["close"])):
+    # 🔥 Start später → valide Daten
+    start_index = 2500
 
-        sub_data = {
-            "open": data["open"][:i],
-            "high": data["high"][:i],
-            "low": data["low"][:i],
-            "close": data["close"][:i]
+    for i in range(start_index, total_candles):
+
+        sub_all = {
+            'open': data['open'][:i],
+            'high': data['high'][:i],
+            'low': data['low'][:i],
+            'close': data['close'][:i],
         }
 
-        signal = generate_signal(sub_data, candle_index=i)
+        m15 = aggregate_candles(sub_all, 3)
+        h1 = aggregate_candles(sub_all, 12)
+
+        if len(h1['close']) < 200 or len(m15['close']) < 50:
+            continue
+
+        _htf_store['m15'] = m15
+        _htf_store['h1'] = h1
+
+        signal = generate_signal(sub_all, candle_index=i)
 
         if signal:
             total += 1
 
-            result = simulate_trade(
-                data,
-                i,
-                signal["direction"],
-                signal["entry"],
-                signal["sl"],
-                signal["tp"]
+            result, pnl = simulate_trade(
+                data, i,
+                signal['direction'],
+                signal['entry'],
+                signal['sl'],
+                signal['tp'],
             )
 
-            logging.info(f"{signal} → {result}")
+            total_pnl += pnl
 
-            if result == "WIN":
+            logging.info(
+                'TRADE %s: %s @ %.2f | SL:%.2f TP:%.2f RR:%s | Risk:$%.2f | Score:%s | %s ($%.2f)',
+                total,
+                signal['direction'],
+                signal['entry'],
+                signal['sl'],
+                signal['tp'],
+                signal.get('rr', '?'),
+                signal.get('sl_dist', 0),
+                signal.get('score', '?'),
+                result,
+                pnl
+            )
+
+            if result == 'WIN':
                 wins += 1
-            elif result == "LOSS":
+            elif result == 'LOSS':
                 losses += 1
+            else:
+                no_result += 1
 
-    logging.info(f"Trades: {total}")
-    logging.info(f"Wins: {wins}")
-    logging.info(f"Losses: {losses}")
+    # Restore original function
+    strat_module.get_candles = original_get_candles
 
-    if total > 0:
-        logging.info(f"Winrate: {round((wins/total)*100,2)}%")
+    logging.info('====================================')
+    logging.info('BACKTEST RESULTS')
+    logging.info('====================================')
+    logging.info(
+        'Candles tested: %s (index %s to %s)',
+        total_candles - start_index,
+        start_index,
+        total_candles
+    )
+    logging.info('Total Trades: %s', total)
+    logging.info('Wins: %s', wins)
+    logging.info('Losses: %s', losses)
+    logging.info('No Result: %s', no_result)
+
+    resolved = wins + losses
+
+    if resolved > 0:
+        winrate = (wins / resolved) * 100
+        logging.info('Winrate: %.1f%% (%s/%s)', winrate, wins, resolved)
+        logging.info('Total PnL: $%.2f', total_pnl)
+
+        avg = total_pnl / resolved
+        logging.info('Avg per trade: $%.2f', avg)
+    else:
+        logging.info('No resolved trades')
+
+    logging.info('====================================')
+
+
+# ==============================
+# START
+# ==============================
 
 run_backtest()
 
