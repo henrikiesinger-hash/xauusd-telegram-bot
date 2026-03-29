@@ -9,7 +9,7 @@ log = logging.getLogger("strategy")
 # CONFIG
 # ==============================
 
-BACKTEST_MODE = True
+BACKTEST_MODE = False
 SCORE_THRESHOLD = 5.5
 COOLDOWN_CANDLES = 24
 LONDON_OPEN_UTC = 7
