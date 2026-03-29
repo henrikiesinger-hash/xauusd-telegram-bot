@@ -10,7 +10,7 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = True
-SCORE_THRESHOLD = 7
+SCORE_THRESHOLD = 6.5
 COOLDOWN_CANDLES = 24
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
@@ -300,9 +300,9 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
     if bos == direction:
         score += 2
     if at_ob:
-        score += 2.0   # 🔥 UPDATED
+        score += 1.5
     if sweep == direction:
-        score += 1.0   # 🔥 UPDATED
+        score += 0.5
 
     if direction == "bullish" and zone == "discount":
         score += 0.5
@@ -356,9 +356,9 @@ def generate_signal(data_m5, candle_index=0):
 
     rsi_val = rsi(c5)
 
-    if direction == "bullish" and rsi_val > 75:
+    if direction == "bullish" and rsi_val > 60:
         return None
-    if direction == "bearish" and rsi_val < 25:
+    if direction == "bearish" and rsi_val < 40:
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
@@ -404,12 +404,6 @@ def generate_signal(data_m5, candle_index=0):
         confidence = "HIGH"
     else:
         confidence = "MODERATE"
-
-    log.info(
-        "SIGNAL: %s @ %.2f | SL:%.2f TP:%.2f | RR:%s | Score:%s | Conf:%s",
-        "BUY" if direction == "bullish" else "SELL",
-        price, sl, tp, rr, score, confidence
-    )
 
     return {
         "direction": "BUY" if direction == "bullish" else "SELL",
