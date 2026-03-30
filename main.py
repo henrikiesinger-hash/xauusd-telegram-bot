@@ -23,6 +23,13 @@ log = logging.getLogger("main")
 
 
 # ==============================
+# GLOBAL TRADE STORAGE
+# ==============================
+
+active_trades = []
+
+
+# ==============================
 # FLASK
 # ==============================
 
@@ -63,6 +70,83 @@ def send_telegram(message):
     except Exception as e:
         log.error("Telegram failed: %s", e)
         return False
+
+
+# ==============================
+# TRADE CHECK
+# ==============================
+
+def check_trade_result(trade):
+    try:
+        data = get_candles("5min", 50)
+        if not data:
+            return None
+
+        for i in range(len(data["close"])):
+            high = data["high"][i]
+            low = data["low"][i]
+
+            if trade["direction"] == "BUY":
+                if low <= trade["sl"]:
+                    return "LOSS"
+                if high >= trade["tp"]:
+                    return "WIN"
+            else:
+                if high >= trade["sl"]:
+                    return "LOSS"
+                if low <= trade["tp"]:
+                    return "WIN"
+
+        return None
+    except Exception as e:
+        log.error("Trade check failed: %s", e)
+        return None
+
+
+def check_active_trades():
+    global active_trades
+    remaining = []
+
+    for trade in active_trades:
+        age_hours = (time.time() - trade["timestamp"]) / 3600
+
+        result = check_trade_result(trade)
+
+        if result:
+            emoji = "✅" if result == "WIN" else "❌"
+            pnl = trade["tp_dist"] if result == "WIN" else -trade["sl_dist"]
+
+            msg = (
+                f"{emoji} <b>TRADE {result}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Direction: {trade['direction']}\n"
+                f"Entry: {trade['entry']}\n"
+                f"{'TP HIT' if result == 'WIN' else 'SL HIT'}: "
+                f"{trade['tp'] if result == 'WIN' else trade['sl']}\n"
+                f"PnL: ${pnl:.2f}\n"
+                f"Score: {trade['score']}/10\n\n"
+                f"⏱ Duration: {age_hours:.1f}h"
+            )
+
+            send_telegram(msg)
+            log.info(
+                "TRADE CLOSED: %s %s | %s | $%.2f",
+                trade["direction"],
+                trade["entry"],
+                result,
+                pnl
+            )
+
+        elif age_hours > 24:
+            send_telegram(
+                f"⏰ Trade expired: {trade['direction']} @ {trade['entry']} (no SL/TP hit in 24h)"
+            )
+            log.info("TRADE EXPIRED: %s @ %s", trade["direction"], trade["entry"])
+
+        else:
+            remaining.append(trade)
+
+    active_trades = remaining
 
 
 # ==============================
@@ -126,6 +210,20 @@ def run_analysis():
         msg = format_signal(signal)
         send_telegram(msg)
 
+        # 🔥 STORE TRADE
+        tp_dist = abs(signal["tp"] - signal["entry"])
+
+        active_trades.append({
+            "direction": signal["direction"],
+            "entry": signal["entry"],
+            "sl": signal["sl"],
+            "tp": signal["tp"],
+            "sl_dist": signal.get("sl_dist", 0),
+            "tp_dist": tp_dist,
+            "score": signal.get("score", 0),
+            "timestamp": time.time(),
+        })
+
     except Exception as e:
         log.error("Analysis failed: %s", e, exc_info=True)
 
@@ -136,6 +234,7 @@ def run_analysis():
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, "interval", minutes=5)
+scheduler.add_job(check_active_trades, "interval", minutes=5)
 scheduler.start()
 
 log.info("Bot started - Live Mode")
