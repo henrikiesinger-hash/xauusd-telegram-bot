@@ -73,7 +73,7 @@ def send_telegram(message):
 
 
 # ==============================
-# TRADE CHECK
+# FIXED TRADE CHECK (🔥 UPDATED)
 # ==============================
 
 def check_trade_result(trade):
@@ -82,7 +82,16 @@ def check_trade_result(trade):
         if not data:
             return None
 
-        for i in range(len(data["close"])):
+        # 🔥 ONLY candles AFTER trade open
+        trade_age_seconds = time.time() - trade["timestamp"]
+        candles_since_trade = int(trade_age_seconds / 300)
+
+        if candles_since_trade < 1:
+            return None
+
+        start = max(0, len(data["close"]) - candles_since_trade)
+
+        for i in range(start, len(data["close"])):
             high = data["high"][i]
             low = data["low"][i]
 
@@ -98,6 +107,7 @@ def check_trade_result(trade):
                     return "WIN"
 
         return None
+
     except Exception as e:
         log.error("Trade check failed: %s", e)
         return None
@@ -129,6 +139,7 @@ def check_active_trades():
             )
 
             send_telegram(msg)
+
             log.info(
                 "TRADE CLOSED: %s %s | %s | $%.2f",
                 trade["direction"],
