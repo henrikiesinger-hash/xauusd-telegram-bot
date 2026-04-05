@@ -123,6 +123,10 @@ def check_active_trades():
         result = check_trade_result(trade)
 
         if result:
+            import strategy
+            strategy._last_trade_result = result
+
+        if result:
             emoji = "✅" if result == "WIN" else "❌"
             pnl = trade["tp_dist"] if result == "WIN" else -trade["sl_dist"]
 
