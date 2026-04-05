@@ -9,9 +9,13 @@ log = logging.getLogger("strategy")
 # CONFIG
 # ==============================
 
-BACKTEST_MODE = True
-SCORE_THRESHOLD = 6
-COOLDOWN_CANDLES = 24
+BACKTEST_MODE = False
+SCORE_THRESHOLD = 6.0
+
+COOLDOWN_AFTER_WIN = 24
+COOLDOWN_AFTER_LOSS = 48
+_last_trade_result = "WIN"
+
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
 
@@ -40,12 +44,18 @@ def is_active_session():
 # ==============================
 
 def is_in_cooldown_live():
-    global _last_signal_time
-    return (time.time() - _last_signal_time) < (COOLDOWN_CANDLES * 300)
+    global _last_signal_time, _last_trade_result
+
+    if _last_trade_result == "LOSS":
+        cooldown = COOLDOWN_AFTER_LOSS * 300
+    else:
+        cooldown = COOLDOWN_AFTER_WIN * 300
+
+    return (time.time() - _last_signal_time) < cooldown
 
 def is_in_cooldown_backtest(candle_index):
     global _last_signal_candle
-    return (candle_index - _last_signal_candle) < COOLDOWN_CANDLES
+    return (candle_index - _last_signal_candle) < COOLDOWN_AFTER_WIN
 
 def record_signal_live():
     global _last_signal_time
@@ -161,7 +171,7 @@ def detect_bos(highs, lows, closes):
     return None
 
 # ==============================
-# ORDERBLOCK
+# ORDERBLOCK (LATEST + VALIDATED)
 # ==============================
 
 def detect_orderblock(highs, lows, opens, closes, direction):
@@ -178,16 +188,22 @@ def detect_orderblock(highs, lows, opens, closes, direction):
         if direction == "bullish" and closes[i] < opens[i]:
             future_high = max(highs[i + 1:i + 4])
             displacement = future_high - lows[i]
+
             if displacement > body * 2:
-                mitigated = any(closes[j] < lows[i] for j in range(i + 1, len(closes)))
+                mitigated = any(
+                    closes[j] < lows[i] for j in range(i + 1, len(closes))
+                )
                 if not mitigated:
                     best = (lows[i], highs[i])
 
         if direction == "bearish" and closes[i] > opens[i]:
             future_low = min(lows[i + 1:i + 4])
             displacement = highs[i] - future_low
+
             if displacement > body * 2:
-                mitigated = any(closes[j] > highs[i] for j in range(i + 1, len(closes)))
+                mitigated = any(
+                    closes[j] > highs[i] for j in range(i + 1, len(closes))
+                )
                 if not mitigated:
                     best = (lows[i], highs[i])
 
@@ -229,7 +245,7 @@ def premium_discount(highs, lows, price):
     return "mid"
 
 # ==============================
-# ATR
+# ATR (TRUE RANGE)
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -265,7 +281,7 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
         sl = structure_sl + atr_val * 0.3
         sl_dist = sl - price
 
-    sl_dist = max(5.0, min(12.0, sl_dist))
+    sl_dist = max(8.0, min(12.0, sl_dist))
     sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
@@ -288,19 +304,22 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
 # ==============================
 
 def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, zone, rsi_val):
-    score = 0
+    score = 0.0
 
     if trend == direction:
-        score += 2
+        score += 2.0
     else:
-        score -= 1
+        score -= 1.0
 
     if structure == direction:
-        score += 1 + struct_str
+        score += 1.0 + struct_str
+
     if bos == direction:
-        score += 2
+        score += 2.0
+
     if at_ob:
         score += 1.5
+
     if sweep == direction:
         score += 0.5
 
@@ -331,8 +350,15 @@ def generate_signal(data_m5, candle_index=0):
         if is_in_cooldown_live():
             return None
 
-    m15 = get_candles("15min")
-    h1 = get_candles("1h")
+    if BACKTEST_MODE:
+        m15 = get_candles("15min")
+        h1 = get_candles("1h")
+    else:
+        htf = get_htf_data()
+        if htf is None:
+            return None
+        m15, h1 = htf
+
     if not m15 or not h1:
         return None
 
@@ -362,7 +388,6 @@ def generate_signal(data_m5, candle_index=0):
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
-
     if ob_low is None:
         return None
 
