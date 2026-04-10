@@ -79,7 +79,7 @@ def run_backtest():
 
     logging.info('START BACKTEST')
 
-    data = get_candles('5min', 10000)
+    data = get_candles('5min', 5000)
 
     if not data:
         logging.error('No data')
@@ -108,7 +108,7 @@ def run_backtest():
     total = 0
     total_pnl = 0.0
 
-    start_index = 5000
+    start_index = 2500
 
     for i in range(start_index, total_candles):
 
