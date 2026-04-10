@@ -1,4 +1,4 @@
-import logging
+import loggingg
 import time
 from indicators import ema, rsi
 from data import get_candles
