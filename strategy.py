@@ -9,7 +9,7 @@ log = logging.getLogger("strategy")
 # CONFIG
 # ==============================
 
-BACKTEST_MODE = True
+BACKTEST_MODE = False
 SCORE_THRESHOLD = 6.0
 
 COOLDOWN_AFTER_WIN = 24
@@ -153,6 +153,20 @@ def trend_direction(closes):
     return None
 
 # ==============================
+# CHOP FILTER
+# ==============================
+
+def is_choppy(closes, threshold_pct=0.1):
+    if len(closes) < 200:
+        return True
+
+    e50 = ema(closes, 50)
+    e200 = ema(closes, 200)
+    spread_pct = abs(e50 - e200) / closes[-1] * 100
+
+    return spread_pct < threshold_pct
+
+# ==============================
 # BOS
 # ==============================
 
@@ -171,7 +185,7 @@ def detect_bos(highs, lows, closes):
     return None
 
 # ==============================
-# ORDERBLOCK (LATEST + VALIDATED)
+# ORDERBLOCK
 # ==============================
 
 def detect_orderblock(highs, lows, opens, closes, direction):
@@ -245,7 +259,7 @@ def premium_discount(highs, lows, price):
     return "mid"
 
 # ==============================
-# ATR (TRUE RANGE)
+# ATR
 # ==============================
 
 def calculate_atr(highs, lows, closes, period=14):
@@ -340,6 +354,7 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
 # ==============================
 
 def generate_signal(data_m5, candle_index=0):
+
     if not BACKTEST_MODE and not is_active_session():
         return None
 
@@ -376,6 +391,9 @@ def generate_signal(data_m5, candle_index=0):
 
     trend = trend_direction(c1)
     if trend is None:
+        return None
+
+    if is_choppy(c1):
         return None
 
     direction = trend
