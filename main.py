@@ -1,277 +1,199 @@
 import logging
-import time
-import requests
+logging.basicConfig(level=logging.INFO)
 
 from flask import Flask
-from apscheduler.schedulers.background import BackgroundScheduler
-
 from data import get_candles
 from strategy import generate_signal
-from config import TELEGRAM_TOKEN, CHAT_ID
+import strategy
 
-
-# ==============================
-# LOGGING
-# ==============================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(message)s"
-)
-
-log = logging.getLogger("main")
-
-
-# ==============================
-# GLOBAL TRADE STORAGE
-# ==============================
-
-active_trades = []
-
-
-# ==============================
-# FLASK
-# ==============================
+strategy.BACKTEST_MODE = True
 
 app = Flask(__name__)
 
-@app.route("/")
+@app.route('/')
 def home():
-    return {"status": "running", "mode": "live"}, 200
+    return 'BACKTEST MODE'
 
 
 # ==============================
-# TELEGRAM
+# AGGREGATION
 # ==============================
 
-def send_telegram(message):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        log.error("Telegram credentials missing")
-        return False
+def aggregate_candles(data, factor):
+    agg = {'open': [], 'high': [], 'low': [], 'close': []}
+    total = len(data['close'])
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    for i in range(0, total - factor + 1, factor):
+        agg['open'].append(data['open'][i])
+        agg['high'].append(max(data['high'][i:i + factor]))
+        agg['low'].append(min(data['low'][i:i + factor]))
+        agg['close'].append(data['close'][i + factor - 1])
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-    }
+    return agg
 
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
 
-        if resp.status_code == 200:
-            log.info("Telegram sent OK")
-            return True
+# ==============================
+# MOCK HTF
+# ==============================
+
+_htf_store = {'m15': None, 'h1': None}
+
+def mock_get_candles(interval, limit=200):
+    if '15' in interval:
+        return _htf_store['m15']
+    if '1h' in interval or '60' in interval:
+        return _htf_store['h1']
+    return None
+
+
+# ==============================
+# TRADE SIMULATION
+# ==============================
+
+def simulate_trade(data, entry_index, direction, entry, sl, tp):
+    for i in range(entry_index + 1, len(data['close'])):
+        high = data['high'][i]
+        low = data['low'][i]
+
+        if direction == 'BUY':
+            if low <= sl:
+                return 'LOSS', round(-(entry - sl), 2)
+            if high >= tp:
+                return 'WIN', round(tp - entry, 2)
+
         else:
-            log.error("Telegram error: %s", resp.text)
-            return False
+            if high >= sl:
+                return 'LOSS', round(-(sl - entry), 2)
+            if low <= tp:
+                return 'WIN', round(entry - tp, 2)
 
-    except Exception as e:
-        log.error("Telegram failed: %s", e)
-        return False
+    return 'NO RESULT', 0.0
 
 
 # ==============================
-# FIXED TRADE CHECK (🔥 UPDATED)
+# BACKTEST
 # ==============================
 
-def check_trade_result(trade):
-    try:
-        data = get_candles("5min", 50)
-        if not data:
-            return None
+def run_backtest():
+    global _htf_store
 
-        # 🔥 ONLY candles AFTER trade open
-        trade_age_seconds = time.time() - trade["timestamp"]
-        candles_since_trade = int(trade_age_seconds / 300)
+    logging.info('START BACKTEST')
 
-        if candles_since_trade < 1:
-            return None
+    data = get_candles('5min', 5000)
 
-        start = max(0, len(data["close"]) - candles_since_trade)
+    if not data:
+        logging.error('No data')
+        return
 
-        for i in range(start, len(data["close"])):
-            high = data["high"][i]
-            low = data["low"][i]
+    total_candles = len(data['close'])
+    logging.info('M5 Candles: %s', total_candles)
 
-            if trade["direction"] == "BUY":
-                if low <= trade["sl"]:
-                    return "LOSS"
-                if high >= trade["tp"]:
-                    return "WIN"
-            else:
-                if high >= trade["sl"]:
-                    return "LOSS"
-                if low <= trade["tp"]:
-                    return "WIN"
+    full_m15 = aggregate_candles(data, 3)
+    full_h1 = aggregate_candles(data, 12)
 
-        return None
+    logging.info('M15: %s | H1: %s',
+                 len(full_m15['close']), len(full_h1['close']))
 
-    except Exception as e:
-        log.error("Trade check failed: %s", e)
-        return None
+    if len(full_h1['close']) < 210:
+        logging.error('Not enough H1 candles')
+        return
 
+    import strategy as strat_module
+    original_get_candles = strat_module.get_candles
+    strat_module.get_candles = mock_get_candles
 
-def check_active_trades():
-    global active_trades
-    remaining = []
+    wins = 0
+    losses = 0
+    no_result = 0
+    total = 0
+    total_pnl = 0.0
 
-    for trade in active_trades:
-        age_hours = (time.time() - trade["timestamp"]) / 3600
+    start_index = 3500
 
-        result = check_trade_result(trade)
+    for i in range(start_index, total_candles):
 
-        if result:
-            import strategy
-            strategy._last_trade_result = result
+        sub_all = {
+            'open': data['open'][:i],
+            'high': data['high'][:i],
+            'low': data['low'][:i],
+            'close': data['close'][:i],
+        }
 
-        if result:
-            emoji = "✅" if result == "WIN" else "❌"
-            pnl = trade["tp_dist"] if result == "WIN" else -trade["sl_dist"]
+        m15 = aggregate_candles(sub_all, 3)
+        h1 = aggregate_candles(sub_all, 12)
 
-            msg = (
-                f"{emoji} <b>TRADE {result}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Direction: {trade['direction']}\n"
-                f"Entry: {trade['entry']}\n"
-                f"{'TP HIT' if result == 'WIN' else 'SL HIT'}: "
-                f"{trade['tp'] if result == 'WIN' else trade['sl']}\n"
-                f"PnL: ${pnl:.2f}\n"
-                f"Score: {trade['score']}/10\n\n"
-                f"⏱ Duration: {age_hours:.1f}h"
+        if len(h1['close']) < 200 or len(m15['close']) < 50:
+            continue
+
+        _htf_store['m15'] = m15
+        _htf_store['h1'] = h1
+
+        signal = generate_signal(sub_all, candle_index=i)
+
+        if signal:
+            total += 1
+
+            result, pnl = simulate_trade(
+                data,
+                i,
+                signal['direction'],
+                signal['entry'],
+                signal['sl'],
+                signal['tp'],
             )
 
-            send_telegram(msg)
+            total_pnl += pnl
 
-            log.info(
-                "TRADE CLOSED: %s %s | %s | $%.2f",
-                trade["direction"],
-                trade["entry"],
+            logging.info(
+                'TRADE %s: %s @ %.2f | SL:%.2f TP:%.2f RR:%s | $%.2f | Score:%s %s | %s ($%.2f)',
+                total,
+                signal['direction'],
+                signal['entry'],
+                signal['sl'],
+                signal['tp'],
+                signal.get('rr', '?'),
+                signal.get('sl_dist', 0),
+                signal.get('score', '?'),
+                signal.get('confidence', ''),
                 result,
                 pnl
             )
 
-        elif age_hours > 24:
-            send_telegram(
-                f"⏰ Trade expired: {trade['direction']} @ {trade['entry']} (no SL/TP hit in 24h)"
-            )
-            log.info("TRADE EXPIRED: %s @ %s", trade["direction"], trade["entry"])
+            if result == 'WIN':
+                wins += 1
+            elif result == 'LOSS':
+                losses += 1
+            else:
+                no_result += 1
 
-        else:
-            remaining.append(trade)
+    # Restore original
+    strat_module.get_candles = original_get_candles
 
-    active_trades = remaining
+    logging.info('====================================')
+    logging.info('BACKTEST RESULTS')
+    logging.info('====================================')
+    logging.info('Total Trades: %s', total)
+    logging.info('Wins: %s', wins)
+    logging.info('Losses: %s', losses)
+    logging.info('No Result: %s', no_result)
 
+    resolved = wins + losses
 
-# ==============================
-# SIGNAL FORMAT
-# ==============================
+    if resolved > 0:
+        winrate = (wins / resolved) * 100
+        logging.info('Winrate: %.1f%% (%s/%s)', winrate, wins, resolved)
+        logging.info('Total PnL: $%.2f', total_pnl)
+        logging.info('Avg per trade: $%.2f', total_pnl / resolved)
 
-def format_signal(signal):
-    direction = signal["direction"]
-
-    emoji = "🟢" if direction == "BUY" else "🔴"
-
-    entry = signal["entry"]
-    sl = signal["sl"]
-    tp = signal["tp"]
-    rr = signal.get("rr", "?")
-    sl_dist = signal.get("sl_dist", "?")
-    score = signal.get("score", "?")
-    conf = signal.get("confidence", "N/A")
-
-    msg = (
-        f"{emoji} <b>XAUUSD {direction} SIGNAL</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 Entry: <b>{entry}</b>\n"
-        f"🛑 SL: {sl} (${sl_dist})\n"
-        f"✅ TP: {tp} (RR {rr})\n\n"
-        f"📊 Score: {score}/10\n"
-        f"🔥 Confidence: {conf}\n\n"
-        f"⏰ {time.strftime('%H:%M UTC', time.gmtime())}"
-    )
-
-    return msg
-
-
-# ==============================
-# CORE LOGIC
-# ==============================
-
-def run_analysis():
-    try:
-        log.info("=== Tick ===")
-
-        data_m5 = get_candles("5min", 200)
-
-        if not data_m5:
-            log.warning("No M5 data")
-            return
-
-        signal = generate_signal(data_m5)
-
-        if signal is None:
-            log.info("No signal")
-            return
-
-        log.info(
-            "SIGNAL: %s @ %s | Score: %s",
-            signal["direction"],
-            signal["entry"],
-            signal.get("score")
-        )
-
-        msg = format_signal(signal)
-        send_telegram(msg)
-
-        # 🔥 STORE TRADE
-        tp_dist = abs(signal["tp"] - signal["entry"])
-
-        active_trades.append({
-            "direction": signal["direction"],
-            "entry": signal["entry"],
-            "sl": signal["sl"],
-            "tp": signal["tp"],
-            "sl_dist": signal.get("sl_dist", 0),
-            "tp_dist": tp_dist,
-            "score": signal.get("score", 0),
-            "timestamp": time.time(),
-        })
-
-    except Exception as e:
-        log.error("Analysis failed: %s", e, exc_info=True)
-
-
-# ==============================
-# SCHEDULER
-# ==============================
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(run_analysis, "interval", minutes=5)
-scheduler.add_job(check_active_trades, "interval", minutes=5)
-scheduler.start()
-
-log.info("Bot started - Live Mode")
+    logging.info('====================================')
 
 
 # ==============================
 # RUN
 # ==============================
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+run_backtest()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
