@@ -10,14 +10,14 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = True
-SCORE_THRESHOLD = 7.0
+SCORE_THRESHOLD = 6.0
 
 COOLDOWN_AFTER_WIN = 24
 COOLDOWN_AFTER_LOSS = 48
 _last_trade_result = "WIN"
 
-LONDON_OPEN_UTC = 7
-NY_CLOSE_UTC = 21
+LONDON_OPEN_UTC = 8
+NY_CLOSE_UTC = 16
 
 _last_signal_time = 0
 _last_signal_candle = -999
