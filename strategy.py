@@ -16,8 +16,8 @@ COOLDOWN_AFTER_WIN = 24
 COOLDOWN_AFTER_LOSS = 48
 _last_trade_result = "WIN"
 
-LONDON_OPEN_UTC = 8
-NY_CLOSE_UTC = 16
+LONDON_OPEN_UTC = 7
+NY_CLOSE_UTC = 21
 
 _last_signal_time = 0
 _last_signal_candle = -999
@@ -295,7 +295,7 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
         sl = structure_sl + atr_val * 0.3
         sl_dist = sl - price
 
-    sl_dist = max(8.0, min(12.0, sl_dist))
+    sl_dist = max(10.0, min(14.0, sl_dist))
     sl = price - sl_dist if direction == "bullish" else price + sl_dist
 
     if direction == "bullish":
