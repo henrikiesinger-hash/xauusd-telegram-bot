@@ -1,6 +1,9 @@
 import logging
 import time
+import csv
+import os
 import requests
+import threading
 
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +11,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from data import get_candles
 from strategy import generate_signal
 from config import TELEGRAM_TOKEN, CHAT_ID
-
 
 # ==============================
 # LOGGING
@@ -21,12 +23,62 @@ logging.basicConfig(
 
 log = logging.getLogger("main")
 
-
 # ==============================
 # GLOBAL TRADE STORAGE
 # ==============================
 
 active_trades = []
+
+# ==============================
+# CSV TRADE LOG
+# ==============================
+
+CSV_FILE = "trade_log.csv"
+
+
+def init_csv():
+    if not os.path.exists(CSV_FILE):
+        with open(CSV_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "timestamp", "date_utc", "direction", "entry", "sl", "tp",
+                "sl_dist", "tp_dist", "rr", "score", "confidence",
+                "result", "pnl", "duration_h"
+            ])
+
+
+init_csv()
+
+
+def log_trade(trade, result, pnl, duration_h):
+    try:
+        with open(CSV_FILE, "a", newline="") as f:
+            writer = csv.writer(f)
+
+            rr = round(trade["tp_dist"] / trade["sl_dist"], 1) if trade["sl_dist"] > 0 else 0
+
+            writer.writerow([
+                trade["timestamp"],
+                time.strftime("%Y-%m-%d %H:%M", time.gmtime(trade["timestamp"])),
+                trade["direction"],
+                trade["entry"],
+                trade["sl"],
+                trade["tp"],
+                trade["sl_dist"],
+                trade["tp_dist"],
+                rr,
+                trade["score"],
+                trade.get("confidence", ""),
+                result,
+                round(pnl, 2),
+                round(duration_h, 1)
+            ])
+
+        log.info("CSV logged: %s %s | %s | $%.2f",
+                 trade["direction"], trade["entry"], result, pnl)
+
+    except Exception as e:
+        log.error("CSV log failed: %s", e)
 
 
 # ==============================
@@ -34,6 +86,7 @@ active_trades = []
 # ==============================
 
 app = Flask(__name__)
+
 
 @app.route("/")
 def home():
@@ -72,8 +125,129 @@ def send_telegram(message):
         return False
 
 
+def send_telegram_file(file_path):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+
+    try:
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": CHAT_ID},
+                files={"document": (os.path.basename(file_path), f)},
+                timeout=30
+            )
+
+        if resp.status_code == 200:
+            log.info("Telegram file sent OK")
+            return True
+        else:
+            log.error("Telegram file error: %s", resp.text)
+            return False
+
+    except Exception as e:
+        log.error("Telegram file failed: %s", e)
+        return False
+
+
 # ==============================
-# FIXED TRADE CHECK (🔥 UPDATED)
+# TELEGRAM COMMANDS
+# ==============================
+
+def handle_command(text):
+    if text == "/log":
+        if os.path.exists(CSV_FILE):
+            send_telegram_file(CSV_FILE)
+        else:
+            send_telegram("No trade log yet.")
+
+    elif text == "/status":
+        msg = (
+            "<b>Bot Status</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Mode: LIVE\n"
+            f"Active trades: {len(active_trades)}\n"
+            f"Time: {time.strftime('%H:%M UTC', time.gmtime())}"
+        )
+        send_telegram(msg)
+
+    elif text == "/stats":
+        if not os.path.exists(CSV_FILE):
+            send_telegram("No trade data yet.")
+            return
+
+        wins = 0
+        losses = 0
+        total_pnl = 0.0
+
+        with open(CSV_FILE, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row["result"] == "WIN":
+                    wins += 1
+                elif row["result"] == "LOSS":
+                    losses += 1
+                try:
+                    total_pnl += float(row["pnl"])
+                except:
+                    pass
+
+        total = wins + losses
+        winrate = round((wins / total) * 100, 1) if total > 0 else 0
+        avg = round(total_pnl / total, 2) if total > 0 else 0
+
+        msg = (
+            "<b>Performance Stats</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Wins: {wins}\n"
+            f"Losses: {losses}\n"
+            f"Winrate: {winrate}%\n"
+            f"Total PnL: ${round(total_pnl, 2)}\n"
+            f"Avg/Trade: ${avg}"
+        )
+
+        send_telegram(msg)
+
+
+def poll_telegram():
+    offset = 0
+    log.info("Telegram polling started")
+
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+
+            resp = requests.get(
+                url,
+                params={"offset": offset, "timeout": 30},
+                timeout=35
+            )
+
+            if resp.status_code == 200:
+                updates = resp.json().get("result", [])
+
+                for update in updates:
+                    offset = update["update_id"] + 1
+
+                    message = update.get("message", {})
+                    text = message.get("text", "").strip().lower()
+                    chat_id = str(message.get("chat", {}).get("id", ""))
+
+                    if chat_id != str(CHAT_ID):
+                        continue
+
+                    if text.startswith("/"):
+                        handle_command(text)
+
+        except Exception as e:
+            log.error("Polling error: %s", e)
+            time.sleep(5)
+
+
+# ==============================
+# TRADE CHECK
 # ==============================
 
 def check_trade_result(trade):
@@ -82,7 +256,6 @@ def check_trade_result(trade):
         if not data:
             return None
 
-        # 🔥 ONLY candles AFTER trade open
         trade_age_seconds = time.time() - trade["timestamp"]
         candles_since_trade = int(trade_age_seconds / 300)
 
@@ -132,7 +305,7 @@ def check_active_trades():
 
             msg = (
                 f"{emoji} <b>TRADE {result}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"Direction: {trade['direction']}\n"
                 f"Entry: {trade['entry']}\n"
                 f"{'TP HIT' if result == 'WIN' else 'SL HIT'}: "
@@ -143,20 +316,13 @@ def check_active_trades():
             )
 
             send_telegram(msg)
-
-            log.info(
-                "TRADE CLOSED: %s %s | %s | $%.2f",
-                trade["direction"],
-                trade["entry"],
-                result,
-                pnl
-            )
+            log_trade(trade, result, pnl, age_hours)
 
         elif age_hours > 24:
             send_telegram(
-                f"⏰ Trade expired: {trade['direction']} @ {trade['entry']} (no SL/TP hit in 24h)"
+                f"⏰ Trade expired: {trade['direction']} @ {trade['entry']}"
             )
-            log.info("TRADE EXPIRED: %s @ %s", trade["direction"], trade["entry"])
+            log_trade(trade, "EXPIRED", 0, age_hours)
 
         else:
             remaining.append(trade)
@@ -169,34 +335,22 @@ def check_active_trades():
 # ==============================
 
 def format_signal(signal):
-    direction = signal["direction"]
+    emoji = "🟢" if signal["direction"] == "BUY" else "🔴"
 
-    emoji = "🟢" if direction == "BUY" else "🔴"
-
-    entry = signal["entry"]
-    sl = signal["sl"]
-    tp = signal["tp"]
-    rr = signal.get("rr", "?")
-    sl_dist = signal.get("sl_dist", "?")
-    score = signal.get("score", "?")
-    conf = signal.get("confidence", "N/A")
-
-    msg = (
-        f"{emoji} <b>XAUUSD {direction} SIGNAL</b>\n"
+    return (
+        f"{emoji} <b>XAUUSD {signal['direction']} SIGNAL</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 Entry: <b>{entry}</b>\n"
-        f"🛑 SL: {sl} (${sl_dist})\n"
-        f"✅ TP: {tp} (RR {rr})\n\n"
-        f"📊 Score: {score}/10\n"
-        f"🔥 Confidence: {conf}\n\n"
+        f"🎯 Entry: <b>{signal['entry']}</b>\n"
+        f"🛑 SL: {signal['sl']} (${signal.get('sl_dist')})\n"
+        f"✅ TP: {signal['tp']} (RR {signal.get('rr')})\n\n"
+        f"📊 Score: {signal.get('score')}/10\n"
+        f"🔥 Confidence: {signal.get('confidence')}\n\n"
         f"⏰ {time.strftime('%H:%M UTC', time.gmtime())}"
     )
 
-    return msg
-
 
 # ==============================
-# CORE LOGIC
+# CORE
 # ==============================
 
 def run_analysis():
@@ -215,17 +369,8 @@ def run_analysis():
             log.info("No signal")
             return
 
-        log.info(
-            "SIGNAL: %s @ %s | Score: %s",
-            signal["direction"],
-            signal["entry"],
-            signal.get("score")
-        )
+        send_telegram(format_signal(signal))
 
-        msg = format_signal(signal)
-        send_telegram(msg)
-
-        # 🔥 STORE TRADE
         tp_dist = abs(signal["tp"] - signal["entry"])
 
         active_trades.append({
@@ -236,6 +381,7 @@ def run_analysis():
             "sl_dist": signal.get("sl_dist", 0),
             "tp_dist": tp_dist,
             "score": signal.get("score", 0),
+            "confidence": signal.get("confidence", ""),
             "timestamp": time.time(),
         })
 
@@ -244,7 +390,7 @@ def run_analysis():
 
 
 # ==============================
-# SCHEDULER
+# STARTUP
 # ==============================
 
 scheduler = BackgroundScheduler()
@@ -252,8 +398,17 @@ scheduler.add_job(run_analysis, "interval", minutes=1)
 scheduler.add_job(check_active_trades, "interval", minutes=1)
 scheduler.start()
 
-log.info("Bot started - Live Mode")
+try:
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook",
+        timeout=10
+    )
+except:
+    pass
 
+threading.Thread(target=poll_telegram, daemon=True).start()
+
+log.info("Bot started - FULL SYSTEM")
 
 # ==============================
 # RUN
@@ -261,10 +416,3 @@ log.info("Bot started - Live Mode")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
-
-
-
-
-
-
