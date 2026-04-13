@@ -1,4 +1,5 @@
 import logging
+import time
 from config import SUPABASE_URL, SUPABASE_KEY
 
 log = logging.getLogger("database")
@@ -87,6 +88,34 @@ def get_trades_since(since_timestamp):
     except Exception as e:
         log.error("Supabase get_trades_since failed: %s", e)
         return None
+
+
+def get_trades_today():
+    now = time.gmtime()
+    midnight = time.mktime(time.strptime(
+        time.strftime("%Y-%m-%d", now), "%Y-%m-%d"
+    )) - time.timezone
+    return get_trades_since(midnight)
+
+
+def get_weekly_pnl(weeks=4):
+    now = time.time()
+    result = []
+
+    for w in range(weeks):
+        end = now - w * 7 * 86400
+        start = end - 7 * 86400
+        trades = get_trades_since(start)
+
+        if trades is None:
+            result.append({"week": w + 1, "pnl": 0, "trades": 0})
+            continue
+
+        week_trades = [t for t in trades if t.get("timestamp", 0) < end]
+        pnl = sum(t.get("pnl", 0) for t in week_trades)
+        result.append({"week": w + 1, "pnl": round(pnl, 2), "trades": len(week_trades)})
+
+    return result
 
 
 def get_stats():

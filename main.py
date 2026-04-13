@@ -336,6 +336,131 @@ def handle_command(text):
     elif text == "/review":
         generate_weekly_review()
 
+    elif text == "/trades":
+        trades = database.get_recent_trades(10)
+
+        if trades is None:
+            trades = []
+            if os.path.exists(CSV_FILE):
+                with open(CSV_FILE, "r") as f:
+                    rows = list(csv.DictReader(f))
+                for row in rows[-10:]:
+                    trades.append({
+                        "direction": row.get("direction", ""),
+                        "entry": row.get("entry", ""),
+                        "pnl": float(row.get("pnl", 0)),
+                        "result": row.get("result", ""),
+                        "score": row.get("score", ""),
+                        "duration_h": row.get("duration_h", ""),
+                    })
+
+        if not trades:
+            send_telegram("No trades yet.")
+            return
+
+        lines = ["<b>Last 10 Trades</b>\n━━━━━━━━━━━━━━━━━━━━\n"]
+        total_pnl = 0
+        wins = 0
+        losses = 0
+
+        for t in trades:
+            r = t.get("result", "")
+            emoji = "✅" if r == "WIN" else "❌" if r == "LOSS" else "⏰"
+            pnl = t.get("pnl", 0)
+            total_pnl += pnl
+            if r == "WIN":
+                wins += 1
+            elif r == "LOSS":
+                losses += 1
+            lines.append(
+                f"{emoji} {t.get('direction', '')} @ {t.get('entry', '')} | "
+                f"${pnl} | Score {t.get('score', '')} | {t.get('duration_h', '')}h"
+            )
+
+        count = wins + losses
+        wr = round((wins / count) * 100, 1) if count > 0 else 0
+        lines.append(f"\n{wins}W/{losses}L | WR {wr}% | PnL ${round(total_pnl, 2)}")
+        send_telegram("\n".join(lines))
+
+    elif text == "/today":
+        trades = database.get_trades_today()
+
+        if trades is None:
+            trades = []
+            if os.path.exists(CSV_FILE):
+                today_str = time.strftime("%Y-%m-%d", time.gmtime())
+                with open(CSV_FILE, "r") as f:
+                    for row in csv.DictReader(f):
+                        if row.get("date_utc", "").startswith(today_str):
+                            trades.append({
+                                "result": row.get("result", ""),
+                                "pnl": float(row.get("pnl", 0)),
+                            })
+
+        session = "Active" if is_active_session() else "Inactive"
+        utc_now = time.strftime("%H:%M UTC", time.gmtime())
+
+        if not trades:
+            send_telegram(
+                f"<b>Today's Summary</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"No trades today.\n\n"
+                f"Session: {session}\n"
+                f"Time: {utc_now}"
+            )
+            return
+
+        wins = sum(1 for t in trades if t.get("result") == "WIN")
+        losses = sum(1 for t in trades if t.get("result") == "LOSS")
+        pnl = round(sum(t.get("pnl", 0) for t in trades), 2)
+
+        send_telegram(
+            f"<b>Today's Summary</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Trades: {len(trades)}\n"
+            f"Wins: {wins} | Losses: {losses}\n"
+            f"PnL: ${pnl}\n\n"
+            f"Session: {session}\n"
+            f"Time: {utc_now}"
+        )
+
+    elif text == "/pnl":
+        weeks = database.get_weekly_pnl(4)
+
+        if not weeks or all(w["trades"] == 0 for w in weeks):
+            send_telegram("No PnL data available.")
+            return
+
+        lines = ["<b>Weekly PnL (Last 4 Weeks)</b>\n━━━━━━━━━━━━━━━━━━━━\n"]
+        total = 0
+
+        for w in reversed(weeks):
+            pnl = w["pnl"]
+            total += pnl
+            emoji = "📈" if pnl >= 0 else "📉"
+            sign = "+" if pnl >= 0 else ""
+            lines.append(f"W{w['week']}: {sign}${pnl} {emoji} ({w['trades']} trades)")
+
+        total_emoji = "📈" if total >= 0 else "📉"
+        sign = "+" if total >= 0 else ""
+        lines.append(f"\nTotal: {sign}${round(total, 2)} {total_emoji}")
+        send_telegram("\n".join(lines))
+
+    elif text == "/help":
+        send_telegram(
+            "<b>Available Commands</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "/status — Bot status, active trades, time\n"
+            "/stats — Winrate, total PnL, avg per trade\n"
+            "/trades — Last 10 trades with details\n"
+            "/today — Today's summary\n"
+            "/pnl — Weekly PnL (last 4 weeks)\n"
+            "/dashboard — Full performance overview\n"
+            "/review — Weekly review (auto: Fri 21 UTC)\n"
+            "/log — Download trade_log.csv\n"
+            "/help — This message"
+        )
+
 
 def poll_telegram():
     offset = 0
