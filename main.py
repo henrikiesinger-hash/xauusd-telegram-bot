@@ -333,6 +333,9 @@ def handle_command(text):
 
         send_telegram(msg)
 
+    elif text == "/review":
+        generate_weekly_review()
+
 
 def poll_telegram():
     offset = 0
@@ -454,6 +457,86 @@ def check_active_trades():
 
 
 # ==============================
+# WEEKLY REVIEW
+# ==============================
+
+def generate_weekly_review():
+    now = time.time()
+    week_ago = now - 7 * 24 * 3600
+    week_nr = time.strftime("%W", time.gmtime())
+
+    # Try Supabase, fallback to CSV
+    trades = database.get_trades_since(week_ago)
+
+    if trades is None:
+        trades = []
+        if os.path.exists(CSV_FILE):
+            with open(CSV_FILE, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        ts = float(row["timestamp"])
+                    except (ValueError, KeyError):
+                        continue
+                    if ts >= week_ago:
+                        trades.append({
+                            "direction": row.get("direction", ""),
+                            "entry": float(row.get("entry", 0)),
+                            "pnl": float(row.get("pnl", 0)),
+                            "result": row.get("result", ""),
+                            "rr": float(row.get("rr", 0)),
+                            "duration_h": float(row.get("duration_h", 0)),
+                            "score": float(row.get("score", 0)),
+                            "confidence": row.get("confidence", ""),
+                        })
+
+    if not trades:
+        send_telegram("No trades this week.")
+        return
+
+    wins = [t for t in trades if t.get("result") == "WIN"]
+    losses = [t for t in trades if t.get("result") == "LOSS"]
+    resolved = len(wins) + len(losses)
+    total_pnl = sum(t.get("pnl", 0) for t in trades)
+    winrate = round((len(wins) / resolved) * 100, 1) if resolved > 0 else 0
+    avg_pnl = round(total_pnl / resolved, 2) if resolved > 0 else 0
+
+    sorted_by_pnl = sorted(trades, key=lambda t: t.get("pnl", 0))
+    best = sorted_by_pnl[-1]
+    worst = sorted_by_pnl[0]
+
+    rr_values = [t.get("rr", 0) for t in trades if t.get("rr")]
+    avg_rr = round(sum(rr_values) / len(rr_values), 1) if rr_values else 0
+
+    dur_values = [t.get("duration_h", 0) for t in trades if t.get("duration_h")]
+    avg_dur = round(sum(dur_values) / len(dur_values), 1) if dur_values else 0
+
+    sniper = sum(1 for t in trades if t.get("confidence") == "SNIPER")
+    high = sum(1 for t in trades if t.get("confidence") == "HIGH")
+    moderate = sum(1 for t in trades if t.get("confidence") == "MODERATE")
+
+    msg = (
+        f"<b>WEEKLY REVIEW — Week {week_nr}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Trades: {len(trades)} | Wins: {len(wins)} | Losses: {len(losses)}\n"
+        f"Winrate: {winrate}%\n"
+        f"Total PnL: ${round(total_pnl, 2)}\n"
+        f"Avg PnL: ${avg_pnl}\n\n"
+        f"Best Trade: ${best.get('pnl', 0)} ({best.get('direction', '')} @ {best.get('entry', '')})\n"
+        f"Worst Trade: ${worst.get('pnl', 0)} ({worst.get('direction', '')} @ {worst.get('entry', '')})\n\n"
+        f"Avg RR: {avg_rr}:1\n"
+        f"Avg Duration: {avg_dur}h\n\n"
+        f"<b>Confidence Breakdown:</b>\n"
+        f"SNIPER: {sniper} trades\n"
+        f"HIGH: {high} trades\n"
+        f"MODERATE: {moderate} trades"
+    )
+
+    send_telegram(msg)
+    log.info("Weekly review sent — Week %s, %s trades", week_nr, len(trades))
+
+
+# ==============================
 # SIGNAL FORMAT
 # ==============================
 
@@ -530,6 +613,7 @@ def run_analysis():
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, "interval", minutes=1)
 scheduler.add_job(check_active_trades, "interval", minutes=1)
+scheduler.add_job(generate_weekly_review, "cron", day_of_week="fri", hour=21, minute=0)
 scheduler.start()
 
 try:

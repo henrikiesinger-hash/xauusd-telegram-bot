@@ -72,6 +72,23 @@ def get_recent_trades(n=20):
         return None
 
 
+def get_trades_since(since_timestamp):
+    client = _get_client()
+    if not client:
+        return None
+
+    try:
+        resp = (client.table("trades")
+                .select("*")
+                .gte("timestamp", since_timestamp)
+                .order("timestamp")
+                .execute())
+        return resp.data
+    except Exception as e:
+        log.error("Supabase get_trades_since failed: %s", e)
+        return None
+
+
 def get_stats():
     trades = get_all_trades()
     if not trades:
