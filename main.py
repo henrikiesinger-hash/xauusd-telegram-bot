@@ -119,58 +119,131 @@ def dashboard_json():
 @app.route("/dashboard/html")
 def dashboard_html():
     stats = database.get_stats()
-    recent = database.get_recent_trades(20) or []
+    recent = database.get_recent_trades(10) or []
 
     if not stats:
-        return "<h1>No data available</h1>", 503
+        return ("<html><body style='background:#0a0a0f;color:#888;display:flex;"
+                "justify-content:center;align-items:center;height:100vh;font-family:system-ui'>"
+                "<h1>No data available</h1></body></html>"), 503
 
     streak = stats["current_streak"]
+    session_active = is_active_session()
+    session_color = "#00c853" if session_active else "#ff1744"
+    session_label = "IN SESSION" if session_active else "OFFLINE"
+    utc_now = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
+    # Best/worst trade display
+    best = stats.get("best_trade")
+    worst = stats.get("worst_trade")
+    best_str = f"${best['pnl']} ({best['direction']})" if best else "—"
+    worst_str = f"${worst['pnl']} ({worst['direction']})" if worst else "—"
+
+    # Confidence breakdown from recent trades
+    all_trades = database.get_all_trades() or []
+    sniper = sum(1 for t in all_trades if t.get("confidence") == "SNIPER")
+    high = sum(1 for t in all_trades if t.get("confidence") == "HIGH")
+    moderate = sum(1 for t in all_trades if t.get("confidence") == "MODERATE")
+    conf_total = sniper + high + moderate
+    sniper_pct = round(sniper / conf_total * 100) if conf_total else 0
+    high_pct = round(high / conf_total * 100) if conf_total else 0
+    moderate_pct = round(moderate / conf_total * 100) if conf_total else 0
+
+    # Trade rows
     trades_rows = ""
     for t in recent:
-        color = "#4ade80" if t.get("result") == "WIN" else "#f87171" if t.get("result") == "LOSS" else "#fbbf24"
+        r = t.get("result", "")
+        if r == "WIN":
+            emoji, color = "&#x2705;", "#00c853"
+        elif r == "LOSS":
+            emoji, color = "&#x274C;", "#ff1744"
+        else:
+            emoji, color = "&#x23F0;", "#d4af37"
+        pnl = t.get("pnl", 0)
+        pnl_sign = "+" if pnl > 0 else ""
         trades_rows += (
             f"<tr>"
-            f"<td>{t.get('date_utc', '')}</td>"
-            f"<td>{t.get('direction', '')}</td>"
+            f"<td>{emoji}</td>"
+            f"<td style='color:#aaa'>{t.get('date_utc', '')[5:]}</td>"
+            f"<td><span style='color:{'#00c853' if t.get('direction')=='BUY' else '#ff1744'}'>"
+            f"{t.get('direction', '')}</span></td>"
             f"<td>{t.get('entry', '')}</td>"
-            f"<td style='color:{color}'>{t.get('result', '')}</td>"
-            f"<td style='color:{color}'>${t.get('pnl', 0)}</td>"
+            f"<td style='color:{color};font-weight:600'>{pnl_sign}${pnl}</td>"
             f"<td>{t.get('score', '')}</td>"
             f"<td>{t.get('rr', '')}</td>"
             f"</tr>"
         )
 
     html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>XAUUSD Dashboard</title>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>XAUUSD Signal Bot</title>
 <style>
-  body {{ background:#0f172a; color:#e2e8f0; font-family:system-ui,sans-serif; margin:0; padding:16px; }}
-  h1 {{ color:#f8fafc; font-size:1.5rem; margin-bottom:4px; }}
-  .sub {{ color:#94a3b8; font-size:0.85rem; margin-bottom:20px; }}
-  .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }}
-  .card {{ background:#1e293b; border-radius:8px; padding:14px; }}
-  .card .label {{ color:#94a3b8; font-size:0.75rem; text-transform:uppercase; }}
-  .card .value {{ font-size:1.4rem; font-weight:700; margin-top:4px; }}
-  .green {{ color:#4ade80; }} .red {{ color:#f87171; }} .yellow {{ color:#fbbf24; }}
-  table {{ width:100%; border-collapse:collapse; font-size:0.85rem; }}
-  th {{ text-align:left; color:#94a3b8; padding:8px 6px; border-bottom:1px solid #334155; }}
-  td {{ padding:8px 6px; border-bottom:1px solid #1e293b; }}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0a0f;color:#c8c8d0;font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;max-width:600px;margin:0 auto}}
+.header{{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid #1a1a2e;margin-bottom:20px}}
+.header h1{{color:#d4af37;font-size:1.15rem;letter-spacing:1px}}
+.status{{display:flex;align-items:center;gap:6px;font-size:0.7rem;color:{session_color};text-transform:uppercase;letter-spacing:1px;font-weight:600}}
+.status .dot{{width:8px;height:8px;border-radius:50%;background:{session_color};box-shadow:0 0 6px {session_color}}}
+.section-title{{color:#d4af37;font-size:0.7rem;text-transform:uppercase;letter-spacing:2px;margin:20px 0 10px;font-weight:600}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+.card{{background:#1a1a2e;border-radius:10px;padding:14px;border:1px solid #252540}}
+.card .label{{color:#666;font-size:0.65rem;text-transform:uppercase;letter-spacing:1px}}
+.card .value{{font-size:1.35rem;font-weight:700;margin-top:4px;color:#e8e8f0}}
+.card .value.green{{color:#00c853}}
+.card .value.red{{color:#ff1744}}
+.card .value.gold{{color:#d4af37}}
+.conf-bar{{margin-top:4px;height:6px;border-radius:3px;background:#252540;overflow:hidden;display:flex}}
+.conf-bar .seg{{height:100%}}
+.conf-legend{{display:flex;gap:12px;margin-top:8px;font-size:0.7rem;color:#888}}
+.conf-legend span{{display:flex;align-items:center;gap:4px}}
+.conf-legend .dot-s{{width:6px;height:6px;border-radius:50%;background:#d4af37}}
+.conf-legend .dot-h{{width:6px;height:6px;border-radius:50%;background:#00c853}}
+.conf-legend .dot-m{{width:6px;height:6px;border-radius:50%;background:#555}}
+table{{width:100%;border-collapse:collapse;font-size:0.78rem}}
+thead th{{text-align:left;color:#555;font-size:0.65rem;text-transform:uppercase;letter-spacing:1px;padding:8px 4px;border-bottom:1px solid #1a1a2e}}
+tbody td{{padding:10px 4px;border-bottom:1px solid #111118}}
+tbody tr:hover{{background:#111118}}
+.footer{{text-align:center;color:#444;font-size:0.65rem;padding:20px 0 8px;border-top:1px solid #1a1a2e;margin-top:24px}}
 </style></head><body>
-<h1>XAUUSD Trading Dashboard</h1>
-<div class="sub">{time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())} | Active: {len(active_trades)}</div>
-<div class="grid">
-  <div class="card"><div class="label">Trades</div><div class="value">{stats['total_trades']}</div></div>
-  <div class="card"><div class="label">Winrate</div><div class="value {'green' if stats['winrate'] >= 50 else 'red'}">{stats['winrate']}%</div></div>
-  <div class="card"><div class="label">Total PnL</div><div class="value {'green' if stats['total_pnl'] >= 0 else 'red'}">${stats['total_pnl']}</div></div>
-  <div class="card"><div class="label">Avg/Trade</div><div class="value {'green' if stats['avg_pnl'] >= 0 else 'red'}">${stats['avg_pnl']}</div></div>
-  <div class="card"><div class="label">Wins</div><div class="value green">{stats['wins']}</div></div>
-  <div class="card"><div class="label">Losses</div><div class="value red">{stats['losses']}</div></div>
-  <div class="card"><div class="label">Streak</div><div class="value {'green' if streak['type']=='WIN' else 'red' if streak['type']=='LOSS' else 'yellow'}">{streak['count']}x {streak['type']}</div></div>
+
+<div class="header">
+<h1>XAUUSD SIGNAL BOT</h1>
+<div class="status"><div class="dot"></div>{session_label}</div>
 </div>
-<h2 style="font-size:1.1rem;margin-bottom:8px;">Recent Trades</h2>
-<table><thead><tr><th>Date</th><th>Dir</th><th>Entry</th><th>Result</th><th>PnL</th><th>Score</th><th>RR</th></tr></thead>
-<tbody>{trades_rows}</tbody></table>
+
+<div class="section-title">Performance</div>
+<div class="grid">
+<div class="card"><div class="label">Total Trades</div><div class="value">{stats['total_trades']}</div></div>
+<div class="card"><div class="label">Winrate</div><div class="value {'green' if stats['winrate']>=50 else 'red'}">{stats['winrate']}%</div></div>
+<div class="card"><div class="label">Total PnL</div><div class="value {'green' if stats['total_pnl']>=0 else 'red'}">{'+'if stats['total_pnl']>=0 else ''}${stats['total_pnl']}</div></div>
+<div class="card"><div class="label">Avg / Trade</div><div class="value {'green' if stats['avg_pnl']>=0 else 'red'}">{'+'if stats['avg_pnl']>=0 else ''}${stats['avg_pnl']}</div></div>
+<div class="card"><div class="label">Best Trade</div><div class="value green" style="font-size:1rem">{best_str}</div></div>
+<div class="card"><div class="label">Worst Trade</div><div class="value red" style="font-size:1rem">{worst_str}</div></div>
+</div>
+
+<div class="section-title">Confidence Breakdown</div>
+<div class="card">
+<div class="conf-bar">
+<div class="seg" style="width:{sniper_pct}%;background:#d4af37"></div>
+<div class="seg" style="width:{high_pct}%;background:#00c853"></div>
+<div class="seg" style="width:{moderate_pct}%;background:#555"></div>
+</div>
+<div class="conf-legend">
+<span><div class="dot-s"></div>SNIPER {sniper}</span>
+<span><div class="dot-h"></div>HIGH {high}</span>
+<span><div class="dot-m"></div>MOD {moderate}</span>
+</div>
+</div>
+
+<div class="section-title">Recent Trades</div>
+<table>
+<thead><tr><th></th><th>Date</th><th>Dir</th><th>Entry</th><th>PnL</th><th>Score</th><th>RR</th></tr></thead>
+<tbody>{trades_rows if trades_rows else '<tr><td colspan="7" style="text-align:center;color:#444;padding:20px">No trades yet</td></tr>'}</tbody>
+</table>
+
+<div class="footer">Last updated: {utc_now}</div>
 </body></html>"""
     return html
 
