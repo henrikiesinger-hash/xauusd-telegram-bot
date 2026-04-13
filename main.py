@@ -5,12 +5,13 @@ import os
 import requests
 import threading
 
-from flask import Flask
+from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from data import get_candles
 from strategy import generate_signal
 from config import TELEGRAM_TOKEN, CHAT_ID
+import database
 
 # ==============================
 # LOGGING
@@ -51,34 +52,44 @@ init_csv()
 
 
 def log_trade(trade, result, pnl, duration_h):
+    rr = round(trade["tp_dist"] / trade["sl_dist"], 1) if trade["sl_dist"] > 0 else 0
+    date_utc = time.strftime("%Y-%m-%d %H:%M", time.gmtime(trade["timestamp"]))
+
+    # CSV logging (backup)
     try:
         with open(CSV_FILE, "a", newline="") as f:
             writer = csv.writer(f)
-
-            rr = round(trade["tp_dist"] / trade["sl_dist"], 1) if trade["sl_dist"] > 0 else 0
-
             writer.writerow([
-                trade["timestamp"],
-                time.strftime("%Y-%m-%d %H:%M", time.gmtime(trade["timestamp"])),
-                trade["direction"],
-                trade["entry"],
-                trade["sl"],
-                trade["tp"],
-                trade["sl_dist"],
-                trade["tp_dist"],
-                rr,
-                trade["score"],
+                trade["timestamp"], date_utc,
+                trade["direction"], trade["entry"],
+                trade["sl"], trade["tp"],
+                trade["sl_dist"], trade["tp_dist"],
+                rr, trade["score"],
                 trade.get("confidence", ""),
-                result,
-                round(pnl, 2),
-                round(duration_h, 1)
+                result, round(pnl, 2), round(duration_h, 1)
             ])
-
         log.info("CSV logged: %s %s | %s | $%.2f",
                  trade["direction"], trade["entry"], result, pnl)
-
     except Exception as e:
         log.error("CSV log failed: %s", e)
+
+    # Supabase logging (primary)
+    database.save_trade({
+        "timestamp": trade["timestamp"],
+        "date_utc": date_utc,
+        "direction": trade["direction"],
+        "entry": trade["entry"],
+        "sl": trade["sl"],
+        "tp": trade["tp"],
+        "sl_dist": trade["sl_dist"],
+        "tp_dist": trade["tp_dist"],
+        "rr": rr,
+        "score": trade["score"],
+        "confidence": trade.get("confidence", ""),
+        "result": result,
+        "pnl": round(pnl, 2),
+        "duration_h": round(duration_h, 1),
+    })
 
 
 # ==============================
@@ -91,6 +102,77 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return {"status": "running", "mode": "live"}, 200
+
+
+@app.route("/dashboard")
+def dashboard_json():
+    stats = database.get_stats()
+    if not stats:
+        return {"error": "No data available"}, 503
+
+    recent = database.get_recent_trades(20)
+    stats["active_trades"] = len(active_trades)
+    stats["last_20_trades"] = recent or []
+    return jsonify(stats)
+
+
+@app.route("/dashboard/html")
+def dashboard_html():
+    stats = database.get_stats()
+    recent = database.get_recent_trades(20) or []
+
+    if not stats:
+        return "<h1>No data available</h1>", 503
+
+    streak = stats["current_streak"]
+
+    trades_rows = ""
+    for t in recent:
+        color = "#4ade80" if t.get("result") == "WIN" else "#f87171" if t.get("result") == "LOSS" else "#fbbf24"
+        trades_rows += (
+            f"<tr>"
+            f"<td>{t.get('date_utc', '')}</td>"
+            f"<td>{t.get('direction', '')}</td>"
+            f"<td>{t.get('entry', '')}</td>"
+            f"<td style='color:{color}'>{t.get('result', '')}</td>"
+            f"<td style='color:{color}'>${t.get('pnl', 0)}</td>"
+            f"<td>{t.get('score', '')}</td>"
+            f"<td>{t.get('rr', '')}</td>"
+            f"</tr>"
+        )
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XAUUSD Dashboard</title>
+<style>
+  body {{ background:#0f172a; color:#e2e8f0; font-family:system-ui,sans-serif; margin:0; padding:16px; }}
+  h1 {{ color:#f8fafc; font-size:1.5rem; margin-bottom:4px; }}
+  .sub {{ color:#94a3b8; font-size:0.85rem; margin-bottom:20px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:24px; }}
+  .card {{ background:#1e293b; border-radius:8px; padding:14px; }}
+  .card .label {{ color:#94a3b8; font-size:0.75rem; text-transform:uppercase; }}
+  .card .value {{ font-size:1.4rem; font-weight:700; margin-top:4px; }}
+  .green {{ color:#4ade80; }} .red {{ color:#f87171; }} .yellow {{ color:#fbbf24; }}
+  table {{ width:100%; border-collapse:collapse; font-size:0.85rem; }}
+  th {{ text-align:left; color:#94a3b8; padding:8px 6px; border-bottom:1px solid #334155; }}
+  td {{ padding:8px 6px; border-bottom:1px solid #1e293b; }}
+</style></head><body>
+<h1>XAUUSD Trading Dashboard</h1>
+<div class="sub">{time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())} | Active: {len(active_trades)}</div>
+<div class="grid">
+  <div class="card"><div class="label">Trades</div><div class="value">{stats['total_trades']}</div></div>
+  <div class="card"><div class="label">Winrate</div><div class="value {'green' if stats['winrate'] >= 50 else 'red'}">{stats['winrate']}%</div></div>
+  <div class="card"><div class="label">Total PnL</div><div class="value {'green' if stats['total_pnl'] >= 0 else 'red'}">${stats['total_pnl']}</div></div>
+  <div class="card"><div class="label">Avg/Trade</div><div class="value {'green' if stats['avg_pnl'] >= 0 else 'red'}">${stats['avg_pnl']}</div></div>
+  <div class="card"><div class="label">Wins</div><div class="value green">{stats['wins']}</div></div>
+  <div class="card"><div class="label">Losses</div><div class="value red">{stats['losses']}</div></div>
+  <div class="card"><div class="label">Streak</div><div class="value {'green' if streak['type']=='WIN' else 'red' if streak['type']=='LOSS' else 'yellow'}">{streak['count']}x {streak['type']}</div></div>
+</div>
+<h2 style="font-size:1.1rem;margin-bottom:8px;">Recent Trades</h2>
+<table><thead><tr><th>Date</th><th>Dir</th><th>Entry</th><th>Result</th><th>PnL</th><th>Score</th><th>RR</th></tr></thead>
+<tbody>{trades_rows}</tbody></table>
+</body></html>"""
+    return html
 
 
 # ==============================
@@ -174,29 +256,39 @@ def handle_command(text):
         send_telegram(msg)
 
     elif text == "/stats":
-        if not os.path.exists(CSV_FILE):
-            send_telegram("No trade data yet.")
-            return
+        # Try Supabase first, CSV as fallback
+        stats = database.get_stats()
 
-        wins = 0
-        losses = 0
-        total_pnl = 0.0
+        if stats:
+            wins = stats["wins"]
+            losses = stats["losses"]
+            winrate = stats["winrate"]
+            total_pnl = stats["total_pnl"]
+            avg = stats["avg_pnl"]
+        else:
+            if not os.path.exists(CSV_FILE):
+                send_telegram("No trade data yet.")
+                return
 
-        with open(CSV_FILE, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row["result"] == "WIN":
-                    wins += 1
-                elif row["result"] == "LOSS":
-                    losses += 1
-                try:
-                    total_pnl += float(row["pnl"])
-                except:
-                    pass
+            wins = 0
+            losses = 0
+            total_pnl = 0.0
 
-        total = wins + losses
-        winrate = round((wins / total) * 100, 1) if total > 0 else 0
-        avg = round(total_pnl / total, 2) if total > 0 else 0
+            with open(CSV_FILE, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row["result"] == "WIN":
+                        wins += 1
+                    elif row["result"] == "LOSS":
+                        losses += 1
+                    try:
+                        total_pnl += float(row["pnl"])
+                    except:
+                        pass
+
+            total = wins + losses
+            winrate = round((wins / total) * 100, 1) if total > 0 else 0
+            avg = round(total_pnl / total, 2) if total > 0 else 0
 
         msg = (
             "<b>Performance Stats</b>\n"
@@ -207,6 +299,37 @@ def handle_command(text):
             f"Total PnL: ${round(total_pnl, 2)}\n"
             f"Avg/Trade: ${avg}"
         )
+
+        send_telegram(msg)
+
+    elif text == "/dashboard":
+        stats = database.get_stats()
+
+        if not stats:
+            send_telegram("Dashboard unavailable — no Supabase data.")
+            return
+
+        streak = stats["current_streak"]
+        streak_emoji = "🟢" if streak["type"] == "WIN" else "🔴" if streak["type"] == "LOSS" else "⚪"
+
+        msg = (
+            "<b>Dashboard</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Trades: {stats['total_trades']}\n"
+            f"Wins: {stats['wins']} | Losses: {stats['losses']}\n"
+            f"Winrate: {stats['winrate']}%\n\n"
+            f"Total PnL: ${stats['total_pnl']}\n"
+            f"Avg/Trade: ${stats['avg_pnl']}\n\n"
+            f"{streak_emoji} Streak: {streak['count']}x {streak['type']}\n"
+            f"Active: {len(active_trades)} trade(s)\n\n"
+        )
+
+        if stats["best_trade"]:
+            b = stats["best_trade"]
+            msg += f"Best: {b['direction']} @ {b['entry']} → ${b['pnl']}\n"
+        if stats["worst_trade"]:
+            w = stats["worst_trade"]
+            msg += f"Worst: {w['direction']} @ {w['entry']} → ${w['pnl']}"
 
         send_telegram(msg)
 

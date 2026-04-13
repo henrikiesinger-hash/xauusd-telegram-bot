@@ -11,12 +11,13 @@
 ## Architecture
 
 ```
-main.py          → Scheduler, Telegram, Trade Management, Flask
+main.py          → Scheduler, Telegram, Trade Management, Flask, Dashboard
 strategy.py      → SMC Signal Logic, Scoring, SL/TP
 data.py          → Candle Data (get_candles)
+database.py      → Supabase Integration, persistente Trade-Daten
 indicators.py    → EMA, RSI
-config.py        → TELEGRAM_TOKEN, CHAT_ID
-trade_log.csv    → Persistent trade history
+config.py        → TELEGRAM_TOKEN, CHAT_ID, SUPABASE_URL, SUPABASE_KEY
+trade_log.csv    → Persistent trade history (CSV backup)
 ```
 
 ## Strategy Rules
@@ -75,6 +76,7 @@ trade_log.csv    → Persistent trade history
 - `/status` — Bot status, active trades, time
 - `/stats` — Win/Loss count, winrate, total PnL, avg per trade
 - `/log` — Download trade_log.csv
+- `/dashboard` — Full performance overview with streak and best/worst trade
 
 ## Deployment
 
@@ -89,11 +91,13 @@ trade_log.csv    → Persistent trade history
 
 - `TELEGRAM_TOKEN` — Bot token from BotFather
 - `CHAT_ID` — Authorized Telegram chat ID
+- `SUPABASE_URL` — Supabase project URL
+- `SUPABASE_KEY` — Supabase anon/service key
 
 ### Dependencies
 
 ```
-flask, requests, apscheduler, gunicorn, numpy
+flask, requests, apscheduler, gunicorn, numpy, supabase
 ```
 
 ## Hard Rules
