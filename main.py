@@ -611,8 +611,8 @@ def run_analysis():
 # ==============================
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(run_analysis, "interval", minutes=1)
-scheduler.add_job(check_active_trades, "interval", minutes=1)
+scheduler.add_job(run_analysis, "interval", minutes=5)
+scheduler.add_job(check_active_trades, "interval", minutes=2)
 scheduler.add_job(generate_weekly_review, "cron", day_of_week="fri", hour=21, minute=0)
 scheduler.start()
 
