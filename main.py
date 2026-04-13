@@ -9,7 +9,7 @@ from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from data import get_candles
-from strategy import generate_signal
+from strategy import generate_signal, is_active_session
 from config import TELEGRAM_TOKEN, CHAT_ID
 import database
 
@@ -476,8 +476,19 @@ def format_signal(signal):
 # CORE
 # ==============================
 
+_last_outside_session_log = 0
+
+
 def run_analysis():
+    global _last_outside_session_log
     try:
+        if not is_active_session():
+            now = time.time()
+            if now - _last_outside_session_log >= 900:
+                log.info("Outside trading session")
+                _last_outside_session_log = now
+            return
+
         log.info("=== Tick ===")
 
         data_m5 = get_candles("5min", 200)
