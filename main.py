@@ -122,9 +122,11 @@ def dashboard_html():
     recent = database.get_recent_trades(10) or []
 
     if not stats:
-        return ("<html><body style='background:#0a0a0f;color:#888;display:flex;"
-                "justify-content:center;align-items:center;height:100vh;font-family:system-ui'>"
-                "<h1>No data available</h1></body></html>"), 503
+        stats = {
+            "total_trades": 0, "wins": 0, "losses": 0, "winrate": 0,
+            "total_pnl": 0, "avg_pnl": 0, "best_trade": None,
+            "worst_trade": None, "current_streak": {"type": "none", "count": 0},
+        }
 
     streak = stats["current_streak"]
     session_active = is_active_session()
