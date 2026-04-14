@@ -350,6 +350,32 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
     return round(score, 1)
 
 # ==============================
+# REGIME DETECTION (shadow mode — log only, no filtering)
+# ==============================
+
+def detect_regime(h1_closes, h1_highs, h1_lows):
+    if len(h1_closes) < 200:
+        return "UNKNOWN"
+
+    # Check VOLATILE: current ATR vs long-term average
+    atr_14 = calculate_atr(h1_highs, h1_lows, h1_closes, 14)
+    atr_50 = calculate_atr(h1_highs, h1_lows, h1_closes, 50)
+    if atr_50 > 0 and atr_14 > atr_50 * 1.5:
+        return "VOLATILE"
+
+    # Check TRENDING: strong EMA spread + clear structure
+    e50 = ema(h1_closes, 50)
+    e200 = ema(h1_closes, 200)
+    spread_pct = abs(e50 - e200) / h1_closes[-1] * 100
+    structure, strength = market_structure(h1_highs, h1_lows)
+
+    if spread_pct > 0.3 and strength >= 1.0 and structure in ("bullish", "bearish"):
+        return "TRENDING"
+
+    return "RANGING"
+
+
+# ==============================
 # MAIN
 # ==============================
 
@@ -448,6 +474,9 @@ def generate_signal(data_m5, candle_index=0):
     else:
         confidence = "MODERATE"
 
+    regime = detect_regime(c1, h1["high"], h1["low"])
+    log.info("Regime: %s (shadow mode)", regime)
+
     return {
         "direction": "BUY" if direction == "bullish" else "SELL",
         "entry": round(price, 2),
@@ -456,5 +485,6 @@ def generate_signal(data_m5, candle_index=0):
         "rr": rr,
         "sl_dist": sl_dist,
         "score": score,
-        "confidence": confidence
+        "confidence": confidence,
+        "regime": regime,
     }

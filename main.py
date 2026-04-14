@@ -44,7 +44,7 @@ def init_csv():
             writer.writerow([
                 "timestamp", "date_utc", "direction", "entry", "sl", "tp",
                 "sl_dist", "tp_dist", "rr", "score", "confidence",
-                "result", "pnl", "duration_h"
+                "result", "pnl", "duration_h", "regime"
             ])
 
 
@@ -66,7 +66,8 @@ def log_trade(trade, result, pnl, duration_h):
                 trade["sl_dist"], trade["tp_dist"],
                 rr, trade["score"],
                 trade.get("confidence", ""),
-                result, round(pnl, 2), round(duration_h, 1)
+                result, round(pnl, 2), round(duration_h, 1),
+                trade.get("regime", ""),
             ])
         log.info("CSV logged: %s %s | %s | $%.2f",
                  trade["direction"], trade["entry"], result, pnl)
@@ -89,6 +90,7 @@ def log_trade(trade, result, pnl, duration_h):
         "result": result,
         "pnl": round(pnl, 2),
         "duration_h": round(duration_h, 1),
+        "regime": trade.get("regime", ""),
     })
 
 
@@ -750,7 +752,8 @@ def format_signal(signal):
         f"🛑 SL: {signal['sl']} (${signal.get('sl_dist')})\n"
         f"✅ TP: {signal['tp']} (RR {signal.get('rr')})\n\n"
         f"📊 Score: {signal.get('score')}/10\n"
-        f"🔥 Confidence: {signal.get('confidence')}\n\n"
+        f"🔥 Confidence: {signal.get('confidence')}\n"
+        f"🌊 Regime: {signal.get('regime', 'N/A')}\n\n"
         f"⏰ {time.strftime('%H:%M UTC', time.gmtime())}"
     )
 
@@ -799,6 +802,7 @@ def run_analysis():
             "tp_dist": tp_dist,
             "score": signal.get("score", 0),
             "confidence": signal.get("confidence", ""),
+            "regime": signal.get("regime", ""),
             "timestamp": time.time(),
         })
 
