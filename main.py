@@ -12,6 +12,7 @@ from data import get_candles
 from strategy import generate_signal, is_active_session
 from config import TELEGRAM_TOKEN, CHAT_ID
 import database
+import news_filter
 
 # ==============================
 # LOGGING
@@ -323,12 +324,19 @@ def handle_command(text):
             send_telegram("No trade log yet.")
 
     elif text == "/status":
+        next_event = news_filter.get_next_event()
+        news_line = ''
+        if next_event:
+            mins = round((next_event['timestamp'] - time.time()) / 60)
+            news_line = f'\nNext News: {next_event["title"]} (in {mins}min)'
+
         msg = (
-            "<b>Bot Status</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Mode: LIVE\n"
-            f"Active trades: {len(active_trades)}\n"
-            f"Time: {time.strftime('%H:%M UTC', time.gmtime())}"
+            '<b>Bot Status</b>\n'
+            '━━━━━━━━━━━━━━━━━━━━\n\n'
+            f'Mode: LIVE\n'
+            f'Active trades: {len(active_trades)}\n'
+            f'Time: {time.strftime("%H:%M UTC", time.gmtime())}'
+            f'{news_line}'
         )
         send_telegram(msg)
 
@@ -523,19 +531,54 @@ def handle_command(text):
         lines.append(f"\nTotal: {sign}${round(total, 2)} {total_emoji}")
         send_telegram("\n".join(lines))
 
+    elif text == "/news":
+        events = news_filter.fetch_todays_events()
+
+        if not events:
+            send_telegram('No high-impact news today.')
+            return
+
+        blackout, detail = news_filter.is_news_blackout()
+        status = '🔴 BLACKOUT ACTIVE' if blackout else '🟢 Clear'
+
+        lines = [
+            '<b>Today\'s High-Impact News</b>\n'
+            '━━━━━━━━━━━━━━━━━━━━\n\n'
+            f'Status: {status}\n'
+        ]
+
+        now = time.time()
+        for e in events:
+            diff_min = round((e['timestamp'] - now) / 60)
+            if diff_min < -3:
+                icon = '✅'
+                timing = 'passed'
+            elif -3 <= diff_min <= 3:
+                icon = '🔴'
+                timing = 'NOW'
+            else:
+                icon = '⏳'
+                timing = f'in {diff_min}min'
+
+            t_str = time.strftime('%H:%M UTC', time.gmtime(e['timestamp']))
+            lines.append(f'{icon} {t_str} — {e["title"]} ({timing})')
+
+        send_telegram('\n'.join(lines))
+
     elif text == "/help":
         send_telegram(
-            "<b>Available Commands</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "/status — Bot status, active trades, time\n"
-            "/stats — Winrate, total PnL, avg per trade\n"
-            "/trades — Last 10 trades with details\n"
-            "/today — Today's summary\n"
-            "/pnl — Weekly PnL (last 4 weeks)\n"
-            "/dashboard — Full performance overview\n"
-            "/review — Weekly review (auto: Fri 21 UTC)\n"
-            "/log — Download trade_log.csv\n"
-            "/help — This message"
+            '<b>Available Commands</b>\n'
+            '━━━━━━━━━━━━━━━━━━━━\n\n'
+            '/status — Bot status, active trades, time\n'
+            '/stats — Winrate, total PnL, avg per trade\n'
+            '/trades — Last 10 trades with details\n'
+            '/today — Today\'s summary\n'
+            '/pnl — Weekly PnL (last 4 weeks)\n'
+            '/dashboard — Full performance overview\n'
+            '/review — Weekly review (auto: Fri 21 UTC)\n'
+            '/news — Today\'s high-impact news events\n'
+            '/log — Download trade_log.csv\n'
+            '/help — This message'
         )
 
 
@@ -743,18 +786,25 @@ def generate_weekly_review():
 # ==============================
 
 def format_signal(signal):
-    emoji = "🟢" if signal["direction"] == "BUY" else "🔴"
+    emoji = '🟢' if signal['direction'] == 'BUY' else '🔴'
+
+    next_event = news_filter.get_next_event()
+    news_line = ''
+    if next_event:
+        mins = round((next_event['timestamp'] - time.time()) / 60)
+        news_line = f'\n📰 Next News: {next_event["title"]} (in {mins}min)'
 
     return (
-        f"{emoji} <b>XAUUSD {signal['direction']} SIGNAL</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 Entry: <b>{signal['entry']}</b>\n"
-        f"🛑 SL: {signal['sl']} (${signal.get('sl_dist')})\n"
-        f"✅ TP: {signal['tp']} (RR {signal.get('rr')})\n\n"
-        f"📊 Score: {signal.get('score')}/10\n"
-        f"🔥 Confidence: {signal.get('confidence')}\n"
-        f"🌊 Regime: {signal.get('regime', 'N/A')}\n\n"
-        f"⏰ {time.strftime('%H:%M UTC', time.gmtime())}"
+        f'{emoji} <b>XAUUSD {signal["direction"]} SIGNAL</b>\n'
+        '━━━━━━━━━━━━━━━━━━━━\n\n'
+        f'🎯 Entry: <b>{signal["entry"]}</b>\n'
+        f'🛑 SL: {signal["sl"]} (${signal.get("sl_dist")})\n'
+        f'✅ TP: {signal["tp"]} (RR {signal.get("rr")})\n\n'
+        f'📊 Score: {signal.get("score")}/10\n'
+        f'🔥 Confidence: {signal.get("confidence")}\n'
+        f'🌊 Regime: {signal.get("regime", "N/A")}\n\n'
+        f'⏰ {time.strftime("%H:%M UTC", time.gmtime())}'
+        f'{news_line}'
     )
 
 
@@ -786,7 +836,24 @@ def run_analysis():
         signal = generate_signal(data_m5)
 
         if signal is None:
-            log.info("No signal")
+            log.info('No signal')
+            return
+
+        blackout, detail = news_filter.is_news_blackout()
+        if blackout:
+            mins = detail['minutes_away']
+            event_name = detail['title']
+            log.info('Signal blocked due to upcoming news: %s (%.1f min)', event_name, mins)
+            if mins > 0:
+                send_telegram(
+                    f'⚠️ Signal blockiert: {event_name} in {round(abs(mins))} Minuten\n'
+                    f'({signal["direction"]} @ {signal["entry"]} | Score {signal.get("score")})'
+                )
+            else:
+                send_telegram(
+                    f'⚠️ Signal blockiert: {event_name} vor {round(abs(mins))} Minuten\n'
+                    f'({signal["direction"]} @ {signal["entry"]} | Score {signal.get("score")})'
+                )
             return
 
         send_telegram(format_signal(signal))
@@ -814,10 +881,16 @@ def run_analysis():
 # STARTUP
 # ==============================
 
+def refresh_news_events():
+    events = news_filter.fetch_todays_events()
+    log.info('News refresh: %s events loaded', len(events) if events else 0)
+
+
 scheduler = BackgroundScheduler()
-scheduler.add_job(run_analysis, "interval", minutes=5)
-scheduler.add_job(check_active_trades, "interval", minutes=2)
-scheduler.add_job(generate_weekly_review, "cron", day_of_week="fri", hour=21, minute=0)
+scheduler.add_job(run_analysis, 'interval', minutes=5)
+scheduler.add_job(check_active_trades, 'interval', minutes=2)
+scheduler.add_job(generate_weekly_review, 'cron', day_of_week='fri', hour=21, minute=0)
+scheduler.add_job(refresh_news_events, 'cron', hour=6, minute=55)
 scheduler.start()
 
 try:
