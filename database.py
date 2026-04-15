@@ -1,5 +1,7 @@
 import logging
 import time
+import csv
+import os
 from config import SUPABASE_URL, SUPABASE_KEY
 
 log = logging.getLogger("database")
@@ -46,31 +48,81 @@ def save_trade(trade_data):
 def get_all_trades():
     client = _get_client()
     if not client:
+        log.warning('Supabase client unavailable, falling back to CSV')
+        return _get_all_trades_csv()
+
+    try:
+        resp = client.table('trades').select('*').order('timestamp').execute()
+        data = resp.data
+
+        if data is None or len(data) == 0:
+            log.warning('Supabase returned empty data (RLS enabled?), falling back to CSV')
+            return _get_all_trades_csv()
+
+        return data
+    except Exception as e:
+        log.error('Supabase get_all_trades failed: %s', e)
+        return _get_all_trades_csv()
+
+
+def _get_all_trades_csv():
+    csv_file = 'trade_log.csv'
+    if not os.path.exists(csv_file):
         return None
 
     try:
-        resp = client.table("trades").select("*").order("timestamp").execute()
-        return resp.data
+        trades = []
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                trades.append({
+                    'timestamp': float(row.get('timestamp', 0)),
+                    'date_utc': row.get('date_utc', ''),
+                    'direction': row.get('direction', ''),
+                    'entry': float(row.get('entry', 0)),
+                    'sl': float(row.get('sl', 0)),
+                    'tp': float(row.get('tp', 0)),
+                    'sl_dist': float(row.get('sl_dist', 0)),
+                    'tp_dist': float(row.get('tp_dist', 0)),
+                    'rr': float(row.get('rr', 0)),
+                    'score': float(row.get('score', 0)),
+                    'confidence': row.get('confidence', ''),
+                    'result': row.get('result', ''),
+                    'pnl': float(row.get('pnl', 0)),
+                    'duration_h': float(row.get('duration_h', 0)),
+                    'regime': row.get('regime', ''),
+                })
+
+        log.info('CSV fallback loaded %s trades', len(trades))
+        return trades if trades else None
     except Exception as e:
-        log.error("Supabase get_all_trades failed: %s", e)
+        log.error('CSV fallback failed: %s', e)
         return None
 
 
 def get_recent_trades(n=20):
     client = _get_client()
     if not client:
-        return None
+        all_trades = _get_all_trades_csv()
+        return list(reversed(all_trades[-n:])) if all_trades else None
 
     try:
-        resp = (client.table("trades")
-                .select("*")
-                .order("timestamp", desc=True)
+        resp = (client.table('trades')
+                .select('*')
+                .order('timestamp', desc=True)
                 .limit(n)
                 .execute())
-        return resp.data
+        data = resp.data
+
+        if data is None or len(data) == 0:
+            all_trades = _get_all_trades_csv()
+            return list(reversed(all_trades[-n:])) if all_trades else None
+
+        return data
     except Exception as e:
-        log.error("Supabase get_recent_trades failed: %s", e)
-        return None
+        log.error('Supabase get_recent_trades failed: %s', e)
+        all_trades = _get_all_trades_csv()
+        return list(reversed(all_trades[-n:])) if all_trades else None
 
 
 def get_trades_since(since_timestamp):
