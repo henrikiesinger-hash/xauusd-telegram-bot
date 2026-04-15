@@ -657,12 +657,66 @@ def check_trade_result(trade):
         return None
 
 
+_session_close_warned = set()
+
+
 def check_active_trades():
-    global active_trades
+    global active_trades, _session_close_warned
     remaining = []
 
+    now = time.gmtime()
+    hour = now.tm_hour
+    minute = now.tm_min
+    minutes_utc = hour * 60 + minute
+
+    # Session close thresholds (20:50 warn, 20:58 force close)
+    warn_at = 20 * 60 + 50    # 20:50 UTC
+    close_at = 20 * 60 + 58   # 20:58 UTC
+    session_end = 21 * 60      # 21:00 UTC
+
     for trade in active_trades:
-        age_hours = (time.time() - trade["timestamp"]) / 3600
+        age_hours = (time.time() - trade['timestamp']) / 3600
+        trade_id = trade['timestamp']
+
+        # Session close: force close at 20:58 UTC
+        if warn_at <= minutes_utc < session_end:
+            mins_left = session_end - minutes_utc
+
+            if minutes_utc >= close_at:
+                # Estimate PnL from current data
+                data = get_candles('5min', 1)
+                current_price = data['close'][-1] if data else trade['entry']
+
+                if trade['direction'] == 'BUY':
+                    pnl = round(current_price - trade['entry'], 2)
+                else:
+                    pnl = round(trade['entry'] - current_price, 2)
+
+                log.info('Session close: %s @ %s | PnL $%.2f',
+                         trade['direction'], trade['entry'], pnl)
+
+                send_telegram(
+                    f'🔒 <b>SESSION CLOSE</b>\n'
+                    f'━━━━━━━━━━━━━━━━━━━━\n\n'
+                    f'Direction: {trade["direction"]}\n'
+                    f'Entry: {trade["entry"]}\n'
+                    f'Close Price: {current_price}\n'
+                    f'PnL: ${pnl}\n\n'
+                    f'FTMO Compliance: No open trades outside session.'
+                )
+
+                log_trade(trade, 'SESSION_CLOSE', pnl, age_hours)
+                _session_close_warned.discard(trade_id)
+                continue
+
+            # Warning at 20:50 UTC (only once per trade)
+            if trade_id not in _session_close_warned:
+                _session_close_warned.add(trade_id)
+                send_telegram(
+                    f'⚠️ Session endet in {mins_left} Minuten — '
+                    f'offener Trade: {trade["direction"]} bei {trade["entry"]}. '
+                    f'Bitte manuell schliessen oder wird bei 20:58 UTC auto-geschlossen.'
+                )
 
         result = check_trade_result(trade)
 
@@ -671,29 +725,31 @@ def check_active_trades():
             strategy._last_trade_result = result
 
         if result:
-            emoji = "✅" if result == "WIN" else "❌"
-            pnl = trade["tp_dist"] if result == "WIN" else -trade["sl_dist"]
+            emoji = '✅' if result == 'WIN' else '❌'
+            pnl = trade['tp_dist'] if result == 'WIN' else -trade['sl_dist']
 
             msg = (
-                f"{emoji} <b>TRADE {result}</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Direction: {trade['direction']}\n"
-                f"Entry: {trade['entry']}\n"
-                f"{'TP HIT' if result == 'WIN' else 'SL HIT'}: "
-                f"{trade['tp'] if result == 'WIN' else trade['sl']}\n"
-                f"PnL: ${pnl:.2f}\n"
-                f"Score: {trade['score']}/10\n\n"
-                f"⏱ Duration: {age_hours:.1f}h"
+                f'{emoji} <b>TRADE {result}</b>\n'
+                '━━━━━━━━━━━━━━━━━━━━\n\n'
+                f'Direction: {trade["direction"]}\n'
+                f'Entry: {trade["entry"]}\n'
+                f'{"TP HIT" if result == "WIN" else "SL HIT"}: '
+                f'{trade["tp"] if result == "WIN" else trade["sl"]}\n'
+                f'PnL: ${pnl:.2f}\n'
+                f'Score: {trade["score"]}/10\n\n'
+                f'⏱ Duration: {age_hours:.1f}h'
             )
 
             send_telegram(msg)
             log_trade(trade, result, pnl, age_hours)
+            _session_close_warned.discard(trade_id)
 
         elif age_hours > 24:
             send_telegram(
-                f"⏰ Trade expired: {trade['direction']} @ {trade['entry']}"
+                f'⏰ Trade expired: {trade["direction"]} @ {trade["entry"]}'
             )
-            log_trade(trade, "EXPIRED", 0, age_hours)
+            log_trade(trade, 'EXPIRED', 0, age_hours)
+            _session_close_warned.discard(trade_id)
 
         else:
             remaining.append(trade)
