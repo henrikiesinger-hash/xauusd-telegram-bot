@@ -119,71 +119,121 @@ def dashboard_json():
     return jsonify(stats)
 
 
-@app.route("/dashboard/html")
+@app.route('/dashboard/html')
 def dashboard_html():
+    import json as _json
+
     stats = database.get_stats()
     recent = database.get_recent_trades(10) or []
 
     if not stats:
         stats = {
-            "total_trades": 0, "wins": 0, "losses": 0, "winrate": 0,
-            "total_pnl": 0, "avg_pnl": 0, "best_trade": None,
-            "worst_trade": None, "current_streak": {"type": "none", "count": 0},
+            'total_trades': 0, 'wins': 0, 'losses': 0, 'winrate': 0,
+            'total_pnl': 0, 'avg_pnl': 0, 'best_trade': None,
+            'worst_trade': None, 'current_streak': {'type': 'none', 'count': 0},
         }
 
-    streak = stats["current_streak"]
+    streak = stats['current_streak']
     session_active = is_active_session()
-    session_color = "#00c853" if session_active else "#ff1744"
-    session_label = "IN SESSION" if session_active else "OFFLINE"
-    utc_now = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    session_color = '#00c853' if session_active else '#ff1744'
+    session_label = 'IN SESSION' if session_active else 'OFFLINE'
+    utc_now = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
 
-    # Best/worst trade display
-    best = stats.get("best_trade")
-    worst = stats.get("worst_trade")
-    best_str = f"${best['pnl']} ({best['direction']})" if best else "—"
-    worst_str = f"${worst['pnl']} ({worst['direction']})" if worst else "—"
+    best = stats.get('best_trade')
+    worst = stats.get('worst_trade')
+    best_str = f'${best["pnl"]} ({best["direction"]})' if best else '—'
+    worst_str = f'${worst["pnl"]} ({worst["direction"]})' if worst else '—'
 
-    # Confidence breakdown from recent trades
     all_trades = database.get_all_trades() or []
-    sniper = sum(1 for t in all_trades if t.get("confidence") == "SNIPER")
-    high = sum(1 for t in all_trades if t.get("confidence") == "HIGH")
-    moderate = sum(1 for t in all_trades if t.get("confidence") == "MODERATE")
+    sniper = sum(1 for t in all_trades if t.get('confidence') == 'SNIPER')
+    high = sum(1 for t in all_trades if t.get('confidence') == 'HIGH')
+    moderate = sum(1 for t in all_trades if t.get('confidence') == 'MODERATE')
     conf_total = sniper + high + moderate
     sniper_pct = round(sniper / conf_total * 100) if conf_total else 0
     high_pct = round(high / conf_total * 100) if conf_total else 0
     moderate_pct = round(moderate / conf_total * 100) if conf_total else 0
 
+    # Chart data preparation
+    has_trades = len(all_trades) > 0
+
+    # Equity curve: cumulative PnL
+    equity_labels = []
+    equity_data = []
+    cumulative = 0
+    for t in all_trades:
+        date_str = t.get('date_utc', '')[:10]
+        equity_labels.append(date_str)
+        cumulative += t.get('pnl', 0)
+        equity_data.append(round(cumulative, 2))
+
+    # PnL per trade: bar colors
+    pnl_labels = []
+    pnl_data = []
+    pnl_colors = []
+    for i, t in enumerate(all_trades):
+        pnl_labels.append(f'#{i+1}')
+        pnl_val = t.get('pnl', 0)
+        pnl_data.append(pnl_val)
+        pnl_colors.append('#00c853' if pnl_val >= 0 else '#ff1744')
+
+    # Regime performance
+    regime_map = {}
+    for t in all_trades:
+        r = t.get('regime', '') or 'UNKNOWN'
+        if r not in regime_map:
+            regime_map[r] = {'total': 0, 'count': 0}
+        regime_map[r]['total'] += t.get('pnl', 0)
+        regime_map[r]['count'] += 1
+    regime_labels = list(regime_map.keys())
+    regime_data = [round(regime_map[r]['total'] / regime_map[r]['count'], 2) for r in regime_labels]
+    regime_colors = ['#d4af37' if v >= 0 else '#ff1744' for v in regime_data]
+
+    # JSON encode for JS
+    equity_labels_js = _json.dumps(equity_labels)
+    equity_data_js = _json.dumps(equity_data)
+    pnl_labels_js = _json.dumps(pnl_labels)
+    pnl_data_js = _json.dumps(pnl_data)
+    pnl_colors_js = _json.dumps(pnl_colors)
+    regime_labels_js = _json.dumps(regime_labels)
+    regime_data_js = _json.dumps(regime_data)
+    regime_colors_js = _json.dumps(regime_colors)
+    wins_count = stats['wins']
+    losses_count = stats['losses']
+
     # Trade rows
-    trades_rows = ""
+    trades_rows = ''
     for t in recent:
-        r = t.get("result", "")
-        if r == "WIN":
-            emoji, color = "&#x2705;", "#00c853"
-        elif r == "LOSS":
-            emoji, color = "&#x274C;", "#ff1744"
+        r = t.get('result', '')
+        if r == 'WIN':
+            emoji, color = '&#x2705;', '#00c853'
+        elif r == 'LOSS':
+            emoji, color = '&#x274C;', '#ff1744'
         else:
-            emoji, color = "&#x23F0;", "#d4af37"
-        pnl = t.get("pnl", 0)
-        pnl_sign = "+" if pnl > 0 else ""
+            emoji, color = '&#x23F0;', '#d4af37'
+        pnl = t.get('pnl', 0)
+        pnl_sign = '+' if pnl > 0 else ''
         trades_rows += (
-            f"<tr>"
-            f"<td>{emoji}</td>"
-            f"<td style='color:#aaa'>{t.get('date_utc', '')[5:]}</td>"
-            f"<td><span style='color:{'#00c853' if t.get('direction')=='BUY' else '#ff1744'}'>"
-            f"{t.get('direction', '')}</span></td>"
-            f"<td>{t.get('entry', '')}</td>"
-            f"<td style='color:{color};font-weight:600'>{pnl_sign}${pnl}</td>"
-            f"<td>{t.get('score', '')}</td>"
-            f"<td>{t.get('rr', '')}</td>"
-            f"</tr>"
+            f'<tr>'
+            f'<td>{emoji}</td>'
+            f'<td style="color:#aaa">{t.get("date_utc", "")[5:]}</td>'
+            f'<td><span style="color:{"#00c853" if t.get("direction")=="BUY" else "#ff1744"}">'
+            f'{t.get("direction", "")}</span></td>'
+            f'<td>{t.get("entry", "")}</td>'
+            f'<td style="color:{color};font-weight:600">{pnl_sign}${pnl}</td>'
+            f'<td>{t.get("score", "")}</td>'
+            f'<td>{t.get("rr", "")}</td>'
+            f'</tr>'
         )
 
-    html = f"""<!DOCTYPE html>
+    no_data_msg = '<div style="text-align:center;color:#444;padding:30px 0">No trade data for charts</div>'
+
+    html = f'''<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="refresh" content="60">
 <title>XAUUSD Signal Bot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#0a0a0f;color:#c8c8d0;font-family:-apple-system,system-ui,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;max-width:600px;margin:0 auto}}
@@ -206,6 +256,9 @@ body{{background:#0a0a0f;color:#c8c8d0;font-family:-apple-system,system-ui,Blink
 .conf-legend .dot-s{{width:6px;height:6px;border-radius:50%;background:#d4af37}}
 .conf-legend .dot-h{{width:6px;height:6px;border-radius:50%;background:#00c853}}
 .conf-legend .dot-m{{width:6px;height:6px;border-radius:50%;background:#555}}
+.chart-container{{background:#1a1a2e;border-radius:10px;padding:14px;border:1px solid #252540;margin-bottom:10px}}
+.chart-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+canvas{{max-height:220px}}
 table{{width:100%;border-collapse:collapse;font-size:0.78rem}}
 thead th{{text-align:left;color:#555;font-size:0.65rem;text-transform:uppercase;letter-spacing:1px;padding:8px 4px;border-bottom:1px solid #1a1a2e}}
 tbody td{{padding:10px 4px;border-bottom:1px solid #111118}}
@@ -242,6 +295,14 @@ tbody tr:hover{{background:#111118}}
 </div>
 </div>
 
+<div class="section-title">Charts</div>
+{'<div class="chart-container"><canvas id="equityChart"></canvas></div>' if has_trades else no_data_msg}
+{'<div class="chart-container"><canvas id="pnlChart"></canvas></div>' if has_trades else ''}
+<div class="chart-row">
+{'<div class="chart-container"><canvas id="winlossChart"></canvas></div>' if has_trades else ''}
+{'<div class="chart-container"><canvas id="regimeChart"></canvas></div>' if has_trades else ''}
+</div>
+
 <div class="section-title">Recent Trades</div>
 <table>
 <thead><tr><th></th><th>Date</th><th>Dir</th><th>Entry</th><th>PnL</th><th>Score</th><th>RR</th></tr></thead>
@@ -249,7 +310,109 @@ tbody tr:hover{{background:#111118}}
 </table>
 
 <div class="footer">Last updated: {utc_now}</div>
-</body></html>"""
+
+{'<script>' + """
+Chart.defaults.color = '#888';
+Chart.defaults.borderColor = '#252540';
+
+new Chart(document.getElementById('equityChart'), {
+  type: 'line',
+  data: {
+    labels: """ + equity_labels_js + """,
+    datasets: [{
+      label: 'Cumulative PnL ($)',
+      data: """ + equity_data_js + """,
+      borderColor: '#d4af37',
+      backgroundColor: 'rgba(212,175,55,0.1)',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 2,
+      pointBackgroundColor: '#d4af37',
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      title: { display: true, text: 'Equity Curve', color: '#c8c8d0', font: { size: 13 } }
+    },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8, font: { size: 10 } }, grid: { display: false } },
+      y: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('pnlChart'), {
+  type: 'bar',
+  data: {
+    labels: """ + pnl_labels_js + """,
+    datasets: [{
+      label: 'PnL ($)',
+      data: """ + pnl_data_js + """,
+      backgroundColor: """ + pnl_colors_js + """,
+      borderRadius: 3,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      title: { display: true, text: 'PnL per Trade', color: '#c8c8d0', font: { size: 13 } }
+    },
+    scales: {
+      x: { ticks: { font: { size: 9 } }, grid: { display: false } },
+      y: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('winlossChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Wins', 'Losses'],
+    datasets: [{
+      data: [""" + str(wins_count) + ',' + str(losses_count) + """],
+      backgroundColor: ['#00c853', '#ff1744'],
+      borderWidth: 0,
+    }]
+  },
+  options: {
+    responsive: true,
+    cutout: '60%',
+    plugins: {
+      title: { display: true, text: 'Win / Loss', color: '#c8c8d0', font: { size: 13 } },
+      legend: { position: 'bottom', labels: { padding: 12, font: { size: 11 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('regimeChart'), {
+  type: 'bar',
+  data: {
+    labels: """ + regime_labels_js + """,
+    datasets: [{
+      label: 'Avg PnL ($)',
+      data: """ + regime_data_js + """,
+      backgroundColor: """ + regime_colors_js + """,
+      borderRadius: 3,
+    }]
+  },
+  options: {
+    responsive: true,
+    indexAxis: 'y',
+    plugins: {
+      legend: { display: false },
+      title: { display: true, text: 'Avg PnL by Regime', color: '#c8c8d0', font: { size: 13 } }
+    },
+    scales: {
+      x: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } },
+      y: { ticks: { font: { size: 11 } }, grid: { display: false } }
+    }
+  }
+});
+""" + '</script>' if has_trades else ''}
+</body></html>'''
     return html
 
 
