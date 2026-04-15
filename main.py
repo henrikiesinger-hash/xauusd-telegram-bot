@@ -257,8 +257,9 @@ body{{background:#0a0a0f;color:#c8c8d0;font-family:-apple-system,system-ui,Blink
 .conf-legend .dot-h{{width:6px;height:6px;border-radius:50%;background:#00c853}}
 .conf-legend .dot-m{{width:6px;height:6px;border-radius:50%;background:#555}}
 .chart-container{{background:#1a1a2e;border-radius:10px;padding:14px;border:1px solid #252540;margin-bottom:10px}}
-.chart-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
-canvas{{max-height:220px}}
+.chart-row{{display:flex;flex-wrap:wrap;gap:10px}}
+.chart-row>.chart-container{{flex:1 1 250px;min-width:0}}
+canvas{{max-width:100%}}
 table{{width:100%;border-collapse:collapse;font-size:0.78rem}}
 thead th{{text-align:left;color:#555;font-size:0.65rem;text-transform:uppercase;letter-spacing:1px;padding:8px 4px;border-bottom:1px solid #1a1a2e}}
 tbody td{{padding:10px 4px;border-bottom:1px solid #111118}}
@@ -338,7 +339,7 @@ new Chart(document.getElementById('equityChart'), {
     },
     scales: {
       x: { ticks: { maxTicksLimit: 8, font: { size: 10 } }, grid: { display: false } },
-      y: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } }
+      y: { ticks: { callback: function(v) { return '$' + v.toFixed(2); }, font: { size: 10 } } }
     }
   }
 });
@@ -362,7 +363,7 @@ new Chart(document.getElementById('pnlChart'), {
     },
     scales: {
       x: { ticks: { font: { size: 9 } }, grid: { display: false } },
-      y: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } }
+      y: { ticks: { callback: function(v) { return '$' + v.toFixed(2); }, font: { size: 10 } } }
     }
   }
 });
@@ -406,7 +407,7 @@ new Chart(document.getElementById('regimeChart'), {
       title: { display: true, text: 'Avg PnL by Regime', color: '#c8c8d0', font: { size: 13 } }
     },
     scales: {
-      x: { ticks: { callback: function(v) { return '$' + v; }, font: { size: 10 } } },
+      x: { ticks: { callback: function(v) { return '$' + v.toFixed(2); }, font: { size: 10 } } },
       y: { ticks: { font: { size: 11 } }, grid: { display: false } }
     }
   }
