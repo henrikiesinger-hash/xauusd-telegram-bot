@@ -32,17 +32,31 @@ def _get_client():
 def save_trade(trade_data):
     client = _get_client()
     if not client:
+        log.error('Supabase save skipped: no client')
         return False
 
     try:
-        client.table("trades").insert(trade_data).execute()
-        log.info("Supabase saved: %s %s | %s",
-                 trade_data.get("direction"), trade_data.get("entry"),
-                 trade_data.get("result"))
+        client.table('trades').insert(trade_data).execute()
+        log.info('Supabase saved: %s %s | %s',
+                 trade_data.get('direction'), trade_data.get('entry'),
+                 trade_data.get('result'))
         return True
     except Exception as e:
-        log.error("Supabase save failed: %s", e)
-        return False
+        log.error('Supabase save failed: %s', e)
+
+        # Retry without optional fields that may not exist in table
+        optional_fields = ['regime']
+        retry_data = {k: v for k, v in trade_data.items() if k not in optional_fields}
+
+        try:
+            client.table('trades').insert(retry_data).execute()
+            log.info('Supabase saved on retry (without optional fields): %s %s | %s',
+                     retry_data.get('direction'), retry_data.get('entry'),
+                     retry_data.get('result'))
+            return True
+        except Exception as e2:
+            log.error('Supabase retry also failed: %s', e2)
+            return False
 
 
 def get_all_trades():
