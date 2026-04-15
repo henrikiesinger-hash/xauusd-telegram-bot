@@ -839,6 +839,22 @@ def run_analysis():
             log.info('No signal')
             return
 
+        current_price = data_m5['close'][-1]
+        if signal['direction'] == 'BUY' and current_price <= signal['sl']:
+            log.info('Signal discarded: price %s already at/below SL %s', current_price, signal['sl'])
+            send_telegram(
+                f'⚠️ Signal verworfen: Preis hat SL bereits erreicht\n'
+                f'(Entry: {signal["entry"]}, SL: {signal["sl"]}, Aktuell: {current_price})'
+            )
+            return
+        if signal['direction'] == 'SELL' and current_price >= signal['sl']:
+            log.info('Signal discarded: price %s already at/above SL %s', current_price, signal['sl'])
+            send_telegram(
+                f'⚠️ Signal verworfen: Preis hat SL bereits erreicht\n'
+                f'(Entry: {signal["entry"]}, SL: {signal["sl"]}, Aktuell: {current_price})'
+            )
+            return
+
         blackout, detail = news_filter.is_news_blackout()
         if blackout:
             mins = detail['minutes_away']
