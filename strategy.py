@@ -281,37 +281,73 @@ def calculate_atr(highs, lows, closes, period=14):
 # SL/TP
 # ==============================
 
-def calculate_sl_tp(direction, price, highs, lows, closes):
+def calculate_sl_tp(direction, price, highs, lows, closes, h1_highs=None, h1_lows=None):
     atr_val = calculate_atr(highs, lows, closes)
 
-    if direction == "bullish":
-        swing_lows = find_swing_lows(lows, 3, 3)
-        structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
-        sl = structure_sl - atr_val * 0.3
-        sl_dist = price - sl
+    swing_sl_level = None
+    swing_tp_level = None
+
+    # Fix 3: Structure-based SL using H1 swing levels
+    if h1_highs is not None and h1_lows is not None:
+        if direction == 'bullish':
+            h1_swl = find_swing_lows(h1_lows, 5, 5)
+            if h1_swl:
+                sl_candidate = h1_swl[-1][1] - 0.5
+                if price - sl_candidate > 0:
+                    swing_sl_level = sl_candidate
+        else:
+            h1_swh = find_swing_highs(h1_highs, 5, 5)
+            if h1_swh:
+                sl_candidate = h1_swh[-1][1] + 0.5
+                if sl_candidate - price > 0:
+                    swing_sl_level = sl_candidate
+
+    if swing_sl_level is not None:
+        sl = swing_sl_level
+        sl_dist = abs(price - sl)
+        # Max cap 12.0 as safety net, NO min cap — structure determines SL
+        if sl_dist > 12.0:
+            sl_dist = 12.0
+            sl = price - sl_dist if direction == 'bullish' else price + sl_dist
     else:
-        swing_highs = find_swing_highs(highs, 3, 3)
-        structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
-        sl = structure_sl + atr_val * 0.3
-        sl_dist = sl - price
+        # ATR fallback (old logic without min cap)
+        if direction == 'bullish':
+            m5_swl = find_swing_lows(lows, 3, 3)
+            structure_sl = m5_swl[-1][1] if m5_swl else min(lows[-15:])
+            sl = structure_sl - atr_val * 0.3
+            sl_dist = price - sl
+        else:
+            m5_swh = find_swing_highs(highs, 3, 3)
+            structure_sl = m5_swh[-1][1] if m5_swh else max(highs[-15:])
+            sl = structure_sl + atr_val * 0.3
+            sl_dist = sl - price
+        sl_dist = max(0.1, min(12.0, sl_dist))
+        sl = price - sl_dist if direction == 'bullish' else price + sl_dist
 
-    sl_dist = max(8.0, min(12.0, sl_dist))
-    sl = price - sl_dist if direction == "bullish" else price + sl_dist
+    # Fix 4: Structure-based TP using H1 swing levels
+    if h1_highs is not None and h1_lows is not None:
+        if direction == 'bullish':
+            h1_swh = find_swing_highs(h1_highs, 5, 5)
+            targets = [s[1] for s in h1_swh if s[1] > price]
+            if targets:
+                swing_tp_level = min(targets)
+        else:
+            h1_swl = find_swing_lows(h1_lows, 5, 5)
+            targets = [s[1] for s in h1_swl if s[1] < price]
+            if targets:
+                swing_tp_level = max(targets)
 
-    if direction == "bullish":
-        targets = [s[1] for s in find_swing_highs(highs, 3, 3) if s[1] > price]
-        tp_dist = min(targets) - price if targets else sl_dist * 3
+    if swing_tp_level is not None:
+        tp = swing_tp_level
+        tp_dist = abs(tp - price)
     else:
-        targets = [s[1] for s in find_swing_lows(lows, 3, 3) if s[1] < price]
-        tp_dist = price - max(targets) if targets else sl_dist * 3
+        # Fallback: SL * 2.0
+        tp_dist = sl_dist * 2.0
+        tp = price + tp_dist if direction == 'bullish' else price - tp_dist
 
-    if tp_dist < sl_dist * 2:
-        tp_dist = sl_dist * 2
+    rr = round(tp_dist / sl_dist, 1) if sl_dist > 0 else 0
 
-    tp = price + tp_dist if direction == "bullish" else price - tp_dist
-    rr = round(tp_dist / sl_dist, 1)
-
-    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr
+    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr, swing_sl_level, swing_tp_level
 
 # ==============================
 # SCORE
@@ -403,9 +439,10 @@ def generate_signal(data_m5, candle_index=0):
     if not m15 or not h1:
         return None
 
-    c5 = data_m5["close"]
-    h5 = data_m5["high"]
-    l5 = data_m5["low"]
+    c5 = data_m5['close']
+    h5 = data_m5['high']
+    l5 = data_m5['low']
+    o5 = data_m5['open']
 
     c15 = m15["close"]
     h15 = m15["high"]
@@ -435,7 +472,11 @@ def generate_signal(data_m5, candle_index=0):
     if ob_low is None:
         return None
 
-    if not (ob_low <= price <= ob_high):
+    # Fix 2: OB Midpoint — BUY must be in discount half, SELL in premium half
+    ob_mid = (ob_low + ob_high) / 2
+    if direction == 'bullish' and price > ob_mid:
+        return None
+    if direction == 'bearish' and price < ob_mid:
         return None
 
     global _used_ob
@@ -458,7 +499,20 @@ def generate_signal(data_m5, candle_index=0):
     if score < SCORE_THRESHOLD:
         return None
 
-    sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
+    # Fix 1: Entry confirmation — last M5 candle must close in trade direction
+    if direction == 'bullish' and c5[-1] <= o5[-1]:
+        return None
+    if direction == 'bearish' and c5[-1] >= o5[-1]:
+        return None
+
+    # Fix 3+4: Structure-based SL/TP using H1 swing levels
+    sl, tp, sl_dist, rr, swing_sl, swing_tp = calculate_sl_tp(
+        direction, price, h5, l5, c5, h1['high'], h1['low']
+    )
+
+    # Fix 4: Minimum RR check
+    if rr < 1.5:
+        return None
 
     if BACKTEST_MODE:
         record_signal_backtest(candle_index)
@@ -478,13 +532,17 @@ def generate_signal(data_m5, candle_index=0):
     log.info("Regime: %s (shadow mode)", regime)
 
     return {
-        "direction": "BUY" if direction == "bullish" else "SELL",
-        "entry": round(price, 2),
-        "sl": sl,
-        "tp": tp,
-        "rr": rr,
-        "sl_dist": sl_dist,
-        "score": score,
-        "confidence": confidence,
-        "regime": regime,
+        'direction': 'BUY' if direction == 'bullish' else 'SELL',
+        'entry': round(price, 2),
+        'sl': sl,
+        'tp': tp,
+        'rr': rr,
+        'sl_dist': sl_dist,
+        'score': score,
+        'confidence': confidence,
+        'regime': regime,
+        'swing_sl': round(swing_sl, 2) if swing_sl is not None else None,
+        'swing_tp': round(swing_tp, 2) if swing_tp is not None else None,
+        'actual_rr': rr,
+        'entry_confirmed': True,
     }
