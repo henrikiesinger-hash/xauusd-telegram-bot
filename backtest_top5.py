@@ -936,3 +936,100 @@ def strategy_s5_sniper_plus_ema(data_m5, data_m15, data_h1,
 
 
 STRATEGIES['S5_Sniper_Plus_EMA'] = strategy_s5_sniper_plus_ema
+
+# ==============================
+# MAIN
+# ==============================
+
+def main():
+    print('=' * 70)
+    print('XAUUSD 5-STRATEGY BACKTEST')
+    print('=' * 70)
+    print()
+
+    m5, m15, h1 = load_data()
+
+    results = {}
+    for name, strategy_func in STRATEGIES.items():
+        print(f'Running {name}...', flush=True)
+        trades = run_backtest(m5, m15, h1, strategy_func)
+        metrics = compute_metrics(trades)
+
+        if len(m5) > 0:
+            days = (m5.iloc[-1]['datetime'] - m5.iloc[0]['datetime']).days
+            metrics['trades_per_day'] = round(
+                metrics['total_trades'] / max(days, 1), 2)
+        else:
+            metrics['trades_per_day'] = 0
+
+        results[name] = metrics
+        print(f'  Trades: {metrics["total_trades"]} | '
+              f'WR: {metrics["winrate"]}% | '
+              f'PnL: ${metrics["total_pnl"]} | '
+              f'Exp: ${metrics["expectancy"]} | '
+              f'T/Day: {metrics["trades_per_day"]}', flush=True)
+    print()
+
+    print('=' * 70)
+    print('FULL COMPARISON TABLE')
+    print('=' * 70)
+    df = pd.DataFrame(results).T
+    df = df[['total_trades', 'wins', 'losses', 'winrate',
+             'total_pnl', 'avg_pnl', 'avg_rr',
+             'fast_stop_rate', 'max_drawdown',
+             'expectancy', 'trades_per_day']]
+    print(df.to_string())
+    print()
+
+    print('=' * 70)
+    print('RANKING BY EXPECTANCY')
+    print('=' * 70)
+    ranked = sorted(results.items(),
+                    key=lambda x: x[1]['expectancy'],
+                    reverse=True)
+    for rank, (name, m) in enumerate(ranked, 1):
+        print(f'{rank}. {name:30s} Exp: ${m["expectancy"]:6.2f} | '
+              f'Trades: {m["total_trades"]:3d} | '
+              f'WR: {m["winrate"]:5.1f}% | '
+              f'PnL: ${m["total_pnl"]:7.2f} | '
+              f'T/Day: {m["trades_per_day"]}')
+    print()
+
+    print('=' * 70)
+    print('RANKING BY TOTAL PNL')
+    print('=' * 70)
+    ranked_pnl = sorted(results.items(),
+                        key=lambda x: x[1]['total_pnl'],
+                        reverse=True)
+    for rank, (name, m) in enumerate(ranked_pnl, 1):
+        print(f'{rank}. {name:30s} PnL: ${m["total_pnl"]:7.2f} | '
+              f'Exp: ${m["expectancy"]:5.2f} | '
+              f'Trades: {m["total_trades"]}')
+    print()
+
+    print('=' * 70)
+    print('SNIPER RECOMMENDATION (1-2 trades/day target)')
+    print('=' * 70)
+    sniper_candidates = [(n, m) for n, m in results.items()
+                         if 0.5 <= m['trades_per_day'] <= 3.0
+                         and m['expectancy'] > 0]
+    if sniper_candidates:
+        sniper_ranked = sorted(sniper_candidates,
+                               key=lambda x: x[1]['expectancy'],
+                               reverse=True)
+        best = sniper_ranked[0]
+        print(f'WINNER: {best[0]}')
+        print(f'  Trades/Day: {best[1]["trades_per_day"]}')
+        print(f'  Winrate: {best[1]["winrate"]}%')
+        print(f'  Expectancy: ${best[1]["expectancy"]}')
+        print(f'  Total PnL: ${best[1]["total_pnl"]}')
+    else:
+        print('Keine Strategie erfuellt Sniper-Kriterien')
+        print('(0.5-3 trades/day UND positive expectancy)')
+    print()
+
+    print('Data source: TwelveData XAU/USD, M5/M15/H1, last 60 days')
+
+
+if __name__ == '__main__':
+    main()
