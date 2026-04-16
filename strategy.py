@@ -419,9 +419,6 @@ def generate_signal(data_m5, candle_index=0):
     if trend is None:
         return None
 
-    if is_choppy(c1):
-        return None
-
     direction = trend
 
     rsi_val = rsi(c5)
@@ -435,7 +432,10 @@ def generate_signal(data_m5, candle_index=0):
     if ob_low is None:
         return None
 
-    if not (ob_low <= price <= ob_high):
+    ob_mid = (ob_low + ob_high) / 2
+    if direction == "bullish" and price > ob_mid:
+        return None
+    if direction == "bearish" and price < ob_mid:
         return None
 
     global _used_ob
