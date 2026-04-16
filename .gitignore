@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+cache_m5.csv
+cache_m15.csv
+cache_h1.csv
