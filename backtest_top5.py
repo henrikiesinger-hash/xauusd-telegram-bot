@@ -100,3 +100,252 @@ def df_to_dict(df, end_idx=None):
         'low': df['low'].values.tolist(),
         'close': df['close'].values.tolist(),
     }
+
+# ==============================
+# INDICATORS
+# ==============================
+
+def ema(values, period):
+    if len(values) < period:
+        return values[-1] if values else 0
+    k = 2 / (period + 1)
+    ema_val = sum(values[:period]) / period
+    for v in values[period:]:
+        ema_val = v * k + ema_val * (1 - k)
+    return ema_val
+
+
+def rsi(values, period=14):
+    if len(values) < period + 1:
+        return 50
+    gains, losses = [], []
+    for i in range(-period, 0):
+        change = values[i] - values[i-1]
+        gains.append(max(change, 0))
+        losses.append(max(-change, 0))
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def calculate_atr(highs, lows, closes, period=14):
+    if len(closes) < period + 1:
+        return 3.0
+    tr_list = []
+    for i in range(-period, 0):
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i-1]),
+            abs(lows[i] - closes[i-1])
+        )
+        tr_list.append(tr)
+    return sum(tr_list) / len(tr_list)
+
+# ==============================
+# SWING POINTS
+# ==============================
+
+def find_swing_highs(highs, left=5, right=5):
+    swings = []
+    for i in range(left, len(highs) - right):
+        window = highs[i-left:i+right+1]
+        if highs[i] == max(window) and len(set(window)) > 1:
+            swings.append((i, highs[i]))
+    return swings
+
+
+def find_swing_lows(lows, left=5, right=5):
+    swings = []
+    for i in range(left, len(lows) - right):
+        window = lows[i-left:i+right+1]
+        if lows[i] == min(window) and len(set(window)) > 1:
+            swings.append((i, lows[i]))
+    return swings
+
+# ==============================
+# STRATEGY LOGIC
+# ==============================
+
+def trend_direction(closes):
+    if len(closes) < 200:
+        return None
+    e50 = ema(closes, 50)
+    e200 = ema(closes, 200)
+    if e50 > e200:
+        return 'bullish'
+    if e50 < e200:
+        return 'bearish'
+    return None
+
+
+def is_choppy(closes, threshold_pct=0.1):
+    if len(closes) < 200:
+        return True
+    e50 = ema(closes, 50)
+    e200 = ema(closes, 200)
+    spread_pct = abs(e50 - e200) / closes[-1] * 100
+    return spread_pct < threshold_pct
+
+
+def market_structure(highs, lows):
+    sh = find_swing_highs(highs)
+    sl = find_swing_lows(lows)
+    if len(sh) < 2 or len(sl) < 2:
+        return 'ranging', 0.0
+    hh = sh[-1][1] > sh[-2][1]
+    hl = sl[-1][1] > sl[-2][1]
+    lh = sh[-1][1] < sh[-2][1]
+    ll = sl[-1][1] < sl[-2][1]
+    if hh and hl:
+        return 'bullish', 1.0
+    if lh and ll:
+        return 'bearish', 1.0
+    if hh or hl:
+        return 'bullish', 0.5
+    if lh or ll:
+        return 'bearish', 0.5
+    return 'ranging', 0.0
+
+
+def detect_bos(highs, lows, closes):
+    sh = find_swing_highs(highs)
+    sl = find_swing_lows(lows)
+    if not sh or not sl:
+        return None
+    if closes[-1] > sh[-1][1]:
+        return 'bullish'
+    if closes[-1] < sl[-1][1]:
+        return 'bearish'
+    return None
+
+
+def detect_orderblock(highs, lows, opens, closes, direction):
+    if len(closes) < 22:
+        return None, None
+    best = None
+    for i in range(len(closes) - 20, len(closes) - 2):
+        body = abs(opens[i] - closes[i])
+        if body < 0.01:
+            continue
+        if direction == 'bullish' and closes[i] < opens[i]:
+            future_high = max(highs[i+1:i+4])
+            displacement = future_high - lows[i]
+            if displacement > body * 2:
+                mitigated = any(closes[j] < lows[i] for j in range(i+1, len(closes)))
+                if not mitigated:
+                    best = (lows[i], highs[i])
+        if direction == 'bearish' and closes[i] > opens[i]:
+            future_low = min(lows[i+1:i+4])
+            displacement = highs[i] - future_low
+            if displacement > body * 2:
+                mitigated = any(closes[j] > highs[i] for j in range(i+1, len(closes)))
+                if not mitigated:
+                    best = (lows[i], highs[i])
+    return best if best else (None, None)
+
+
+def liquidity_sweep(highs, lows, closes):
+    if len(highs) < 10:
+        return None
+    prev_high = max(highs[-10:-1])
+    prev_low = min(lows[-10:-1])
+    if highs[-1] > prev_high and closes[-1] < prev_high:
+        return 'bearish'
+    if lows[-1] < prev_low and closes[-1] > prev_low:
+        return 'bullish'
+    return None
+
+
+def premium_discount(highs, lows, price):
+    hi = max(highs[-50:])
+    lo = min(lows[-50:])
+    if hi == lo:
+        return 'mid'
+    pct = (price - lo) / (hi - lo)
+    if pct > 0.65:
+        return 'premium'
+    if pct < 0.35:
+        return 'discount'
+    return 'mid'
+
+
+def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, zone, rsi_val):
+    score = 0.0
+    if trend == direction:
+        score += 2.0
+    else:
+        score -= 1.0
+    if structure == direction:
+        score += 1.0 + struct_str
+    if bos == direction:
+        score += 2.0
+    if at_ob:
+        score += 1.5
+    if sweep == direction:
+        score += 0.5
+    if direction == 'bullish' and zone == 'discount':
+        score += 0.5
+    if direction == 'bearish' and zone == 'premium':
+        score += 0.5
+    if direction == 'bullish' and 30 < rsi_val < 55:
+        score += 0.5
+    if direction == 'bearish' and 45 < rsi_val < 70:
+        score += 0.5
+    return round(score, 1)
+
+# ==============================
+# SL/TP
+# ==============================
+
+def calculate_sl_tp_simple(direction, price, highs, lows, closes):
+    atr_val = calculate_atr(highs, lows, closes)
+    if direction == 'bullish':
+        swing_lows = find_swing_lows(lows, 3, 3)
+        structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
+        sl_dist = price - (structure_sl - atr_val * 0.3)
+    else:
+        swing_highs = find_swing_highs(highs, 3, 3)
+        structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
+        sl_dist = (structure_sl + atr_val * 0.3) - price
+    sl_dist = max(8.0, min(12.0, sl_dist))
+    sl = price - sl_dist if direction == 'bullish' else price + sl_dist
+    tp_dist = sl_dist * 2
+    tp = price + tp_dist if direction == 'bullish' else price - tp_dist
+    return sl, tp, sl_dist, 2.0
+
+
+def calculate_sl_tp_structural(direction, price, highs, lows):
+    if direction == 'bullish':
+        swing_lows = find_swing_lows(lows, 3, 3)
+        if not swing_lows:
+            return None
+        structural_sl = swing_lows[-1][1] - 0.5
+        sl_dist = price - structural_sl
+        if sl_dist > 12.0 or sl_dist <= 0:
+            return None
+        swing_highs_above = [s[1] for s in find_swing_highs(highs, 3, 3) if s[1] > price]
+        tp_dist = (min(swing_highs_above) - price) if swing_highs_above else sl_dist * 2.0
+        rr = tp_dist / sl_dist
+        if rr < 1.5:
+            return None
+        sl = structural_sl
+        tp = price + tp_dist
+    else:
+        swing_highs = find_swing_highs(highs, 3, 3)
+        if not swing_highs:
+            return None
+        structural_sl = swing_highs[-1][1] + 0.5
+        sl_dist = structural_sl - price
+        if sl_dist > 12.0 or sl_dist <= 0:
+            return None
+        swing_lows_below = [s[1] for s in find_swing_lows(lows, 3, 3) if s[1] < price]
+        tp_dist = (price - max(swing_lows_below)) if swing_lows_below else sl_dist * 2.0
+        rr = tp_dist / sl_dist
+        if rr < 1.5:
+            return None
+        sl = structural_sl
+        tp = price - tp_dist
+    return sl, tp, sl_dist, round(rr, 2)
