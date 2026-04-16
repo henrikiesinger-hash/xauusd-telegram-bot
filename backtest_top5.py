@@ -349,3 +349,142 @@ def calculate_sl_tp_structural(direction, price, highs, lows):
         sl = structural_sl
         tp = price - tp_dist
     return sl, tp, sl_dist, round(rr, 2)
+
+# ==============================
+# BACKTEST ENGINE
+# ==============================
+
+def map_htf_index(m5_time, htf_df):
+    for i in range(len(htf_df)):
+        if htf_df.iloc[i]['datetime'] > m5_time:
+            return max(0, i - 1)
+    return len(htf_df) - 1
+
+
+def run_backtest(m5, m15, h1, strategy_func):
+    trades = []
+    active_trade = None
+    last_signal_idx = -1000
+    used_ob = None
+    last_result = 'WIN'
+
+    for i in range(200, len(m5)):
+        current_time = m5.iloc[i]['datetime']
+        hour = current_time.hour
+        if hour < LONDON_OPEN_UTC or hour >= NY_CLOSE_UTC:
+            continue
+
+        # Check active trade
+        if active_trade is not None:
+            high = m5.iloc[i]['high']
+            low = m5.iloc[i]['low']
+            closed = False
+
+            if active_trade['direction'] == 'BUY':
+                if low <= active_trade['sl']:
+                    pnl = -active_trade['sl_dist']
+                    trades.append({**active_trade, 'result': 'LOSS', 'pnl': pnl,
+                                   'duration_candles': i - active_trade['open_idx']})
+                    last_result = 'LOSS'
+                    closed = True
+                elif high >= active_trade['tp']:
+                    pnl = active_trade['tp_dist']
+                    trades.append({**active_trade, 'result': 'WIN', 'pnl': pnl,
+                                   'duration_candles': i - active_trade['open_idx']})
+                    last_result = 'WIN'
+                    closed = True
+            else:
+                if high >= active_trade['sl']:
+                    pnl = -active_trade['sl_dist']
+                    trades.append({**active_trade, 'result': 'LOSS', 'pnl': pnl,
+                                   'duration_candles': i - active_trade['open_idx']})
+                    last_result = 'LOSS'
+                    closed = True
+                elif low <= active_trade['tp']:
+                    pnl = active_trade['tp_dist']
+                    trades.append({**active_trade, 'result': 'WIN', 'pnl': pnl,
+                                   'duration_candles': i - active_trade['open_idx']})
+                    last_result = 'WIN'
+                    closed = True
+
+            if closed:
+                active_trade = None
+            elif i - active_trade['open_idx'] > 288:
+                active_trade = None
+
+        if active_trade is not None:
+            continue
+
+        # Generate signal
+        m15_idx = map_htf_index(current_time, m15)
+        h1_idx = map_htf_index(current_time, h1)
+
+        if m15_idx < 50 or h1_idx < 200:
+            continue
+
+        data_m5 = df_to_dict(m5, i + 1)
+        data_m15 = df_to_dict(m15, m15_idx + 1)
+        data_h1 = df_to_dict(h1, h1_idx + 1)
+
+        signal, new_used_ob, new_last_signal_idx = strategy_func(
+            data_m5, data_m15, data_h1, i,
+            last_signal_idx, used_ob, last_result
+        )
+
+        if signal:
+            active_trade = {**signal, 'open_idx': i}
+            used_ob = new_used_ob
+            last_signal_idx = i
+
+    return trades
+
+# ==============================
+# METRICS
+# ==============================
+
+def compute_metrics(trades):
+    if not trades:
+        return {
+            'total_trades': 0, 'wins': 0, 'losses': 0, 'winrate': 0,
+            'total_pnl': 0, 'avg_pnl': 0, 'avg_rr': 0,
+            'fast_stop_rate': 0, 'max_drawdown': 0, 'expectancy': 0,
+        }
+
+    wins = [t for t in trades if t['result'] == 'WIN']
+    losses = [t for t in trades if t['result'] == 'LOSS']
+    total_pnl = sum(t['pnl'] for t in trades)
+    winrate = len(wins) / len(trades) * 100
+
+    avg_win = sum(t['pnl'] for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(t['pnl'] for t in losses) / len(losses) if losses else 0
+    expectancy = (winrate / 100) * avg_win + (1 - winrate / 100) * avg_loss
+
+    fast_stops = [t for t in losses if t['duration_candles'] <= 2]
+    fast_stop_rate = len(fast_stops) / len(losses) * 100 if losses else 0
+
+    equity = [0]
+    for t in trades:
+        equity.append(equity[-1] + t['pnl'])
+    peak = equity[0]
+    max_dd = 0
+    for e in equity:
+        if e > peak:
+            peak = e
+        dd = peak - e
+        if dd > max_dd:
+            max_dd = dd
+
+    avg_rr = sum(t['rr'] for t in trades) / len(trades)
+
+    return {
+        'total_trades': len(trades),
+        'wins': len(wins),
+        'losses': len(losses),
+        'winrate': round(winrate, 1),
+        'total_pnl': round(total_pnl, 2),
+        'avg_pnl': round(total_pnl / len(trades), 2),
+        'avg_rr': round(avg_rr, 2),
+        'fast_stop_rate': round(fast_stop_rate, 1),
+        'max_drawdown': round(max_dd, 2),
+        'expectancy': round(expectancy, 2),
+    }
