@@ -1,1 +1,1 @@
-web: python backtest_variants.py && sleep 300
+web: python backtest_variants.py && sleep 600
