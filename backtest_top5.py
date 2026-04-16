@@ -761,3 +761,88 @@ def strategy_s3_sniper_plus_candle(data_m5, data_m15, data_h1,
 
 
 STRATEGIES['S3_Sniper_Plus_Candle'] = strategy_s3_sniper_plus_candle
+
+# ==============================
+# STRATEGY S4 — EMA Pullback + OB Confluence (no SMC score)
+# ==============================
+
+def strategy_s4_ema_pullback_ob(data_m5, data_m15, data_h1,
+                                candle_index, last_signal_idx,
+                                used_ob, last_result):
+    cooldown = COOLDOWN_AFTER_LOSS if last_result == 'LOSS' else COOLDOWN_AFTER_WIN
+    if candle_index - last_signal_idx < cooldown:
+        return None, used_ob, last_signal_idx
+
+    if (len(data_m5['close']) < 200 or
+            len(data_m15['close']) < 50 or
+            len(data_h1['close']) < 200):
+        return None, used_ob, last_signal_idx
+
+    h1_ema50 = ema(data_h1['close'], 50)
+    h1_ema200 = ema(data_h1['close'], 200)
+    if h1_ema50 > h1_ema200:
+        trend = 'bullish'
+    elif h1_ema50 < h1_ema200:
+        trend = 'bearish'
+    else:
+        return None, used_ob, last_signal_idx
+
+    m15_ema20 = ema(data_m15['close'], 20)
+    price = data_m5['close'][-1]
+    if abs(price - m15_ema20) > 1.0:
+        return None, used_ob, last_signal_idx
+
+    ob_low, ob_high = detect_orderblock(
+        data_m15['high'], data_m15['low'],
+        data_m15['open'], data_m15['close'],
+        trend)
+    if ob_low is None:
+        return None, used_ob, last_signal_idx
+    ob_id = (round(ob_low, 0), round(ob_high, 0))
+    if ob_id == used_ob:
+        return None, used_ob, last_signal_idx
+    if not (ob_low <= price <= ob_high):
+        return None, used_ob, last_signal_idx
+
+    o = data_m5['open']
+    c = data_m5['close']
+    h = data_m5['high']
+    l = data_m5['low']
+
+    if trend == 'bullish':
+        if not (c[-1] > o[-1] and
+                c[-2] < o[-2] and
+                c[-1] > o[-2] and
+                o[-1] < c[-2]):
+            return None, used_ob, last_signal_idx
+        entry = c[-1]
+        sl = l[-1] - 2.0
+        sl_dist = entry - sl
+    else:
+        if not (c[-1] < o[-1] and
+                c[-2] > o[-2] and
+                c[-1] < o[-2] and
+                o[-1] > c[-2]):
+            return None, used_ob, last_signal_idx
+        entry = c[-1]
+        sl = h[-1] + 2.0
+        sl_dist = sl - entry
+
+    tp_dist = sl_dist * 2
+    tp = entry + tp_dist if trend == 'bullish' else entry - tp_dist
+    rr = 2.0
+
+    signal = {
+        'direction': 'BUY' if trend == 'bullish' else 'SELL',
+        'entry': round(entry, 2),
+        'sl': round(sl, 2),
+        'tp': round(tp, 2),
+        'sl_dist': round(sl_dist, 2),
+        'tp_dist': round(tp_dist, 2),
+        'rr': rr,
+        'score': 0.0,
+    }
+    return signal, ob_id, candle_index
+
+
+STRATEGIES['S4_EMA_Pullback_OB'] = strategy_s4_ema_pullback_ob
