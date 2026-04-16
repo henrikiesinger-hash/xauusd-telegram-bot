@@ -664,3 +664,100 @@ def strategy_s2_smc_candle_confirm(data_m5, data_m15, data_h1,
 
 
 STRATEGIES['S2_SMC_Candle_Confirm'] = strategy_s2_smc_candle_confirm
+
+# ==============================
+# STRATEGY S3 — SMC Sniper + Candle Confirmation (score >= 7.5)
+# ==============================
+
+def strategy_s3_sniper_plus_candle(data_m5, data_m15, data_h1,
+                                   candle_index, last_signal_idx,
+                                   used_ob, last_result):
+    score_threshold = 7.5
+    confidence_min = 7.0
+
+    c5 = data_m5['close']
+    h5 = data_m5['high']
+    l5 = data_m5['low']
+    o5 = data_m5['open']
+
+    if len(c5) < 200 or len(data_m15['close']) < 50 or len(data_h1['close']) < 200:
+        return None, used_ob, last_signal_idx
+
+    cooldown = COOLDOWN_AFTER_LOSS if last_result == 'LOSS' else COOLDOWN_AFTER_WIN
+    if candle_index - last_signal_idx < cooldown:
+        return None, used_ob, last_signal_idx
+
+    c15 = data_m15['close']
+    h15 = data_m15['high']
+    l15 = data_m15['low']
+    o15 = data_m15['open']
+    c1 = data_h1['close']
+    price = c5[-1]
+
+    trend = trend_direction(c1)
+    if trend is None:
+        return None, used_ob, last_signal_idx
+
+    direction = trend
+    rsi_val = rsi(c5)
+    if direction == 'bullish' and rsi_val > 60:
+        return None, used_ob, last_signal_idx
+    if direction == 'bearish' and rsi_val < 40:
+        return None, used_ob, last_signal_idx
+
+    ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
+    if ob_low is None:
+        return None, used_ob, last_signal_idx
+
+    mid = (ob_low + ob_high) / 2
+    if direction == 'bullish' and price > mid:
+        return None, used_ob, last_signal_idx
+    if direction == 'bearish' and price < mid:
+        return None, used_ob, last_signal_idx
+
+    ob_id = (round(ob_low, 0), round(ob_high, 0))
+    if ob_id == used_ob:
+        return None, used_ob, last_signal_idx
+
+    # Candle Confirmation Filter
+    o5_last = o5[-1]
+    c5_last = c5[-1]
+    h5_last = h5[-1]
+    l5_last = l5[-1]
+    body = abs(c5_last - o5_last)
+    candle_range = h5_last - l5_last
+    if direction == 'bullish':
+        if not (c5_last > o5_last and body > 0.5 * candle_range):
+            return None, used_ob, last_signal_idx
+    else:
+        if not (c5_last < o5_last and body > 0.5 * candle_range):
+            return None, used_ob, last_signal_idx
+
+    sweep = liquidity_sweep(h5, l5, c5)
+    zone = premium_discount(h15, l15, price)
+    structure, struct_str = market_structure(h15, l15)
+    bos = detect_bos(h15, l15, c15)
+
+    score = calculate_score(direction, trend, structure, struct_str, bos,
+                            True, sweep, zone, rsi_val)
+    if score < score_threshold:
+        return None, used_ob, last_signal_idx
+    if score < confidence_min:
+        return None, used_ob, last_signal_idx
+
+    sl, tp, sl_dist, rr = calculate_sl_tp_simple(direction, price, h5, l5, c5)
+
+    signal = {
+        'direction': 'BUY' if direction == 'bullish' else 'SELL',
+        'entry': round(price, 2),
+        'sl': round(sl, 2),
+        'tp': round(tp, 2),
+        'sl_dist': round(sl_dist, 2),
+        'tp_dist': round(abs(tp - price), 2),
+        'rr': rr,
+        'score': score,
+    }
+    return signal, ob_id, candle_index
+
+
+STRATEGIES['S3_Sniper_Plus_Candle'] = strategy_s3_sniper_plus_candle
