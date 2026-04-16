@@ -1,1 +1,1 @@
-web: gunicorn main:app
+web: python backtest_variants.py && sleep 300
