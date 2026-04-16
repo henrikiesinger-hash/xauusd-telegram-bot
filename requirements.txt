@@ -3,4 +3,5 @@ requests
 apscheduler
 gunicorn
 numpy
+pandas
 supabase
