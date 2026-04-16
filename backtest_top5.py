@@ -846,3 +846,93 @@ def strategy_s4_ema_pullback_ob(data_m5, data_m15, data_h1,
 
 
 STRATEGIES['S4_EMA_Pullback_OB'] = strategy_s4_ema_pullback_ob
+
+# ==============================
+# STRATEGY S5 — SMC Sniper + EMA Confluence (score >= 7.5, price near H1 EMA50)
+# ==============================
+
+def strategy_s5_sniper_plus_ema(data_m5, data_m15, data_h1,
+                                candle_index, last_signal_idx,
+                                used_ob, last_result):
+    score_threshold = 7.5
+    confidence_min = 7.0
+
+    c5 = data_m5['close']
+    h5 = data_m5['high']
+    l5 = data_m5['low']
+
+    if len(c5) < 200 or len(data_m15['close']) < 50 or len(data_h1['close']) < 200:
+        return None, used_ob, last_signal_idx
+
+    cooldown = COOLDOWN_AFTER_LOSS if last_result == 'LOSS' else COOLDOWN_AFTER_WIN
+    if candle_index - last_signal_idx < cooldown:
+        return None, used_ob, last_signal_idx
+
+    c15 = data_m15['close']
+    h15 = data_m15['high']
+    l15 = data_m15['low']
+    o15 = data_m15['open']
+    c1 = data_h1['close']
+    h1_highs = data_h1['high']
+    h1_lows = data_h1['low']
+    price = c5[-1]
+
+    trend = trend_direction(c1)
+    if trend is None:
+        return None, used_ob, last_signal_idx
+
+    direction = trend
+    rsi_val = rsi(c5)
+    if direction == 'bullish' and rsi_val > 60:
+        return None, used_ob, last_signal_idx
+    if direction == 'bearish' and rsi_val < 40:
+        return None, used_ob, last_signal_idx
+
+    ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
+    if ob_low is None:
+        return None, used_ob, last_signal_idx
+
+    mid = (ob_low + ob_high) / 2
+    if direction == 'bullish' and price > mid:
+        return None, used_ob, last_signal_idx
+    if direction == 'bearish' and price < mid:
+        return None, used_ob, last_signal_idx
+
+    ob_id = (round(ob_low, 0), round(ob_high, 0))
+    if ob_id == used_ob:
+        return None, used_ob, last_signal_idx
+
+    # EMA Confluence Filter: price must be within 1.5 * H1 ATR of H1 EMA50
+    h1_ema50 = ema(c1, 50)
+    h1_atr = calculate_atr(h1_highs, h1_lows, c1, 14)
+    if abs(price - h1_ema50) >= 1.5 * h1_atr:
+        return None, used_ob, last_signal_idx
+
+    sweep = liquidity_sweep(h5, l5, c5)
+    zone = premium_discount(h15, l15, price)
+    structure, struct_str = market_structure(h15, l15)
+    bos = detect_bos(h15, l15, c15)
+
+    score = calculate_score(direction, trend, structure, struct_str, bos,
+                            True, sweep, zone, rsi_val)
+    if score < score_threshold:
+        return None, used_ob, last_signal_idx
+    if score < confidence_min:
+        return None, used_ob, last_signal_idx
+
+    sl, tp, sl_dist, rr = calculate_sl_tp_simple(direction, price, h5, l5, c5)
+
+    signal = {
+        'direction': 'BUY' if direction == 'bullish' else 'SELL',
+        'entry': round(price, 2),
+        'sl': round(sl, 2),
+        'tp': round(tp, 2),
+        'sl_dist': round(sl_dist, 2),
+        'tp_dist': round(abs(tp - price), 2),
+        'rr': rr,
+        'score': score,
+    }
+    return signal, ob_id, candle_index
+
+
+STRATEGIES['S5_Sniper_Plus_EMA'] = strategy_s5_sniper_plus_ema
