@@ -1,1 +1,1 @@
-web: python backtest_variants_v3.py && sleep 900
+web: gunicorn main:app --bind 0.0.0.0:8080
