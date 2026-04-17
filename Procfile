@@ -1,1 +1,1 @@
-web: python backtest_diagnosis.py && sleep 600
+web: python backtest_variants_v2.py && sleep 900
