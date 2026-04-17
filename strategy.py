@@ -10,10 +10,10 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = False
-SCORE_THRESHOLD = 6.0
+SCORE_THRESHOLD = 6.5
 
-COOLDOWN_AFTER_WIN = 24
-COOLDOWN_AFTER_LOSS = 48
+COOLDOWN_AFTER_WIN = 6
+COOLDOWN_AFTER_LOSS = 12
 _last_trade_result = "WIN"
 
 LONDON_OPEN_UTC = 7
@@ -429,9 +429,9 @@ def generate_signal(data_m5, candle_index=0):
 
     rsi_val = rsi(c5)
 
-    if direction == "bullish" and rsi_val > 60:
+    if direction == "bullish" and rsi_val > 75:
         return None
-    if direction == "bearish" and rsi_val < 40:
+    if direction == "bearish" and rsi_val < 25:
         return None
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
