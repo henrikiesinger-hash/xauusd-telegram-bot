@@ -34,7 +34,13 @@ def is_active_session():
     weekday = now.tm_wday
     hour = now.tm_hour
 
+    # Weekend: no trading
     if weekday >= 5:
+        return False
+
+    # FTMO Gap Trading Rule: no new trades 2h before weekend close
+    # XAUUSD closes Fri ~21:00 UTC, reopens Sun ~22:00 UTC (>2h gap)
+    if weekday == 4 and hour >= 19:
         return False
 
     return LONDON_OPEN_UTC <= hour < NY_CLOSE_UTC
