@@ -1,1 +1,1 @@
-web: python backtest_sell_diagnosis.py && sleep 600
+web: gunicorn main:app --bind 0.0.0.0:8080
