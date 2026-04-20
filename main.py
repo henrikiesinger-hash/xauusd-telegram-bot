@@ -1045,6 +1045,10 @@ def run_analysis():
                 _last_outside_session_log = now
             return
 
+        if len(active_trades) > 0:
+            log.info("Skipping analysis: %s active trade(s)", len(active_trades))
+            return
+
         log.info("=== Tick ===")
 
         data_m5 = get_candles("5min", 200)
