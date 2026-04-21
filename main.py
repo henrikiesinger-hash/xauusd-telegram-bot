@@ -7,12 +7,14 @@ import threading
 
 from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from data import get_candles
 from strategy import generate_signal, is_active_session
 from config import TELEGRAM_TOKEN, CHAT_ID
 import database
 import news_filter
+import strategy
 
 # ==============================
 # LOGGING
@@ -1164,6 +1166,13 @@ scheduler.add_job(check_active_trades, 'interval', minutes=2, misfire_grace_time
 scheduler.add_job(check_active_trades, 'cron', hour=20, minute=58, misfire_grace_time=60, id='force_close_cron_backup')
 scheduler.add_job(generate_weekly_review, 'cron', day_of_week='fri', hour=21, minute=0)
 scheduler.add_job(refresh_news_events, 'cron', hour=6, minute=55)
+scheduler.add_job(
+    strategy.reset_used_ob,
+    CronTrigger(hour=7, minute=0, timezone='UTC'),
+    id='daily_ob_reset',
+    misfire_grace_time=300,
+    replace_existing=True,
+)
 scheduler.start()
 
 try:

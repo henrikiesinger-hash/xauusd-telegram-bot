@@ -71,6 +71,12 @@ def record_signal_backtest(candle_index):
     global _last_signal_candle
     _last_signal_candle = candle_index
 
+def reset_used_ob():
+    global _used_ob
+    prev = _used_ob
+    _used_ob = None
+    log.info(f'daily ob_reset: prev={prev}')
+
 # ==============================
 # HTF CACHE
 # ==============================
@@ -471,6 +477,7 @@ def generate_signal(data_m5, candle_index=0):
     else:
         record_signal_live()
 
+    log.info(f'signal ob_id={ob_id} prev_used_ob={_used_ob}')
     _used_ob = ob_id
 
     if score >= 8.5:
