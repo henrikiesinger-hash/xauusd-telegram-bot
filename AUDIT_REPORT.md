@@ -28,7 +28,7 @@ Scope: live stack (main.py, strategy.py, indicators.py, data.py, database.py, ne
 
 ## HIGH
 
-- `active_trades` mutated by two APScheduler threads without lock → append/replace race can drop trades (main.py:32, 827, 921, 1103)
+- [HIGH][RESOLVED] `active_trades` mutated by two APScheduler threads without lock → append/replace race can drop trades (main.py:32, 827, 921, 1103). Resolved by commit 8bff461 (active_trades_lock added; all 3 mutation sites covered — main.py:933, 1124, 1156).
 - Session force-close window is 2min wide (20:58–21:00) with 2min scheduler interval → fire at exactly 21:00 skips close, trade stays open past FTMO cutoff (main.py:837-839, 846, 1131)
 - `_used_ob` is a single value, not a set → only the last OB is blocked, spec says 'one-shot per OB' (strategy.py:24, 450-451, 474)
 - `is_in_cooldown_backtest` uses `COOLDOWN_AFTER_WIN` only, never LOSS → backtest/live parity broken (strategy.py:62-64)
