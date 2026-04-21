@@ -184,6 +184,117 @@ def get_weekly_pnl(weeks=4):
     return result
 
 
+def save_open_trades(trades):
+    client = _get_client()
+    if not client:
+        log.error('save_open_trades: no Supabase client')
+        return False
+
+    if not trades:
+        try:
+            client.table('open_trades').delete().neq('timestamp', 0).execute()
+            return True
+        except Exception as e:
+            log.error('save_open_trades: clear failed: %s', e)
+            return False
+
+    rows = []
+    for t in trades:
+        rows.append({
+            'timestamp': t['timestamp'],
+            'direction': t['direction'],
+            'entry': t['entry'],
+            'sl': t['sl'],
+            'tp': t['tp'],
+            'sl_dist': t.get('sl_dist', 0),
+            'tp_dist': t.get('tp_dist', 0),
+            'score': t.get('score', 0),
+            'confidence': t.get('confidence', ''),
+            'regime': t.get('regime', ''),
+        })
+
+    try:
+        client.table('open_trades').upsert(rows, on_conflict='timestamp').execute()
+    except Exception as e:
+        if '23505' in str(e):
+            log.warning('save_open_trades: duplicate key, retrying with +1us offset')
+            for r in rows:
+                r['timestamp'] = r['timestamp'] + 0.000001
+            try:
+                client.table('open_trades').upsert(rows, on_conflict='timestamp').execute()
+            except Exception as e2:
+                log.error('save_open_trades: upsert retry failed: %s', e2)
+                return False
+        else:
+            log.error('save_open_trades: upsert failed: %s', e)
+            return False
+
+    current_ts = [r['timestamp'] for r in rows]
+    try:
+        client.table('open_trades').delete().not_.in_('timestamp', current_ts).execute()
+    except Exception as e:
+        log.error('save_open_trades: delete stale failed: %s', e)
+        return False
+
+    return True
+
+
+def load_open_trades():
+    client = _get_client()
+    if not client:
+        log.error('load_open_trades: no Supabase client, active_trades stays empty')
+        return []
+
+    try:
+        resp = client.table('open_trades').select('*').execute()
+        rows = resp.data or []
+    except Exception as e:
+        log.error('load_open_trades: fetch failed: %s', e)
+        return []
+
+    if not rows:
+        log.info('load_open_trades: no open trades to restore')
+        return []
+
+    timestamps = [row['timestamp'] for row in rows
+                  if row.get('timestamp') is not None]
+
+    closed_set = set()
+    try:
+        resp = (client.table('trades')
+                .select('timestamp')
+                .in_('timestamp', timestamps)
+                .execute())
+        closed_set = {r['timestamp'] for r in (resp.data or [])}
+    except Exception as e:
+        log.error('load_open_trades: batched cross-check failed, treating all as valid: %s', e)
+
+    valid = []
+    ghost_ts = []
+
+    for row in rows:
+        ts = row.get('timestamp')
+        if ts is None:
+            continue
+
+        if ts in closed_set:
+            log.warning('load_open_trades: dropping ghost ts=%s (already in trades)', ts)
+            ghost_ts.append(ts)
+            continue
+
+        valid.append(row)
+
+    if ghost_ts:
+        try:
+            client.table('open_trades').delete().in_('timestamp', ghost_ts).execute()
+            log.info('load_open_trades: deleted %s ghost rows', len(ghost_ts))
+        except Exception as e:
+            log.error('load_open_trades: ghost delete failed: %s', e)
+
+    log.info('load_open_trades: restored %s open trades', len(valid))
+    return valid
+
+
 def get_stats():
     trades = get_all_trades()
     if not trades:

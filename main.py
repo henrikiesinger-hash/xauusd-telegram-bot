@@ -30,6 +30,7 @@ log = logging.getLogger("main")
 # ==============================
 
 active_trades = []
+active_trades_lock = threading.Lock()
 
 # ==============================
 # CSV TRADE LOG
@@ -114,7 +115,8 @@ def dashboard_json():
         return {"error": "No data available"}, 503
 
     recent = database.get_recent_trades(20)
-    stats["active_trades"] = len(active_trades)
+    with active_trades_lock:
+        stats["active_trades"] = len(active_trades)
     stats["last_20_trades"] = recent or []
     return jsonify(stats)
 
@@ -494,11 +496,13 @@ def handle_command(text):
             mins = round((next_event['timestamp'] - time.time()) / 60)
             news_line = f'\nNext News: {next_event["title"]} (in {mins}min)'
 
+        with active_trades_lock:
+            active_count = len(active_trades)
         msg = (
             '<b>Bot Status</b>\n'
             '━━━━━━━━━━━━━━━━━━━━\n\n'
             f'Mode: LIVE\n'
-            f'Active trades: {len(active_trades)}\n'
+            f'Active trades: {active_count}\n'
             f'Time: {time.strftime("%H:%M UTC", time.gmtime())}'
             f'{news_line}'
         )
@@ -561,6 +565,9 @@ def handle_command(text):
         streak = stats["current_streak"]
         streak_emoji = "🟢" if streak["type"] == "WIN" else "🔴" if streak["type"] == "LOSS" else "⚪"
 
+        with active_trades_lock:
+            active_count = len(active_trades)
+
         msg = (
             "<b>Dashboard</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -570,7 +577,7 @@ def handle_command(text):
             f"Total PnL: ${stats['total_pnl']}\n"
             f"Avg/Trade: ${stats['avg_pnl']}\n\n"
             f"{streak_emoji} Streak: {streak['count']}x {streak['type']}\n"
-            f"Active: {len(active_trades)} trade(s)\n\n"
+            f"Active: {active_count} trade(s)\n\n"
         )
 
         if stats["best_trade"]:
@@ -826,6 +833,11 @@ _session_close_warned = set()
 
 def check_active_trades():
     global active_trades, _session_close_warned
+
+    with active_trades_lock:
+        snapshot = list(active_trades)
+        snapshot_timestamps = {t['timestamp'] for t in snapshot}
+
     remaining = []
 
     now = time.gmtime()
@@ -838,7 +850,7 @@ def check_active_trades():
     close_at = 20 * 60 + 58   # 20:58 UTC
     session_end = 21 * 60      # 21:00 UTC
 
-    for trade in active_trades:
+    for trade in snapshot:
         age_hours = (time.time() - trade['timestamp']) / 3600
         trade_id = trade['timestamp']
 
@@ -918,7 +930,14 @@ def check_active_trades():
         else:
             remaining.append(trade)
 
-    active_trades = remaining
+    with active_trades_lock:
+        # Preserve any trades that run_analysis appended during unlocked iteration
+        new_trades = [t for t in active_trades
+                      if t['timestamp'] not in snapshot_timestamps]
+        active_trades = remaining + new_trades
+        final_snapshot = list(active_trades)
+
+    database.save_open_trades(final_snapshot)
 
 
 # ==============================
@@ -1045,8 +1064,10 @@ def run_analysis():
                 _last_outside_session_log = now
             return
 
-        if len(active_trades) > 0:
-            log.info("Skipping analysis: %s active trade(s)", len(active_trades))
+        with active_trades_lock:
+            active_count = len(active_trades)
+        if active_count > 0:
+            log.info("Skipping analysis: %s active trade(s)", active_count)
             return
 
         log.info("=== Tick ===")
@@ -1100,18 +1121,22 @@ def run_analysis():
 
         tp_dist = abs(signal["tp"] - signal["entry"])
 
-        active_trades.append({
-            "direction": signal["direction"],
-            "entry": signal["entry"],
-            "sl": signal["sl"],
-            "tp": signal["tp"],
-            "sl_dist": signal.get("sl_dist", 0),
-            "tp_dist": tp_dist,
-            "score": signal.get("score", 0),
-            "confidence": signal.get("confidence", ""),
-            "regime": signal.get("regime", ""),
-            "timestamp": time.time(),
-        })
+        with active_trades_lock:
+            active_trades.append({
+                "direction": signal["direction"],
+                "entry": signal["entry"],
+                "sl": signal["sl"],
+                "tp": signal["tp"],
+                "sl_dist": signal.get("sl_dist", 0),
+                "tp_dist": tp_dist,
+                "score": signal.get("score", 0),
+                "confidence": signal.get("confidence", ""),
+                "regime": signal.get("regime", ""),
+                "timestamp": time.time(),
+            })
+            final_snapshot = list(active_trades)
+
+        database.save_open_trades(final_snapshot)
 
     except Exception as e:
         log.error("Analysis failed: %s", e, exc_info=True)
@@ -1125,6 +1150,14 @@ def refresh_news_events():
     events = news_filter.fetch_todays_events()
     log.info('News refresh: %s events loaded', len(events) if events else 0)
 
+
+try:
+    restored = database.load_open_trades()
+    with active_trades_lock:
+        active_trades = restored
+    log.info('Startup: restored %s open trade(s)', len(restored))
+except Exception as e:
+    log.error('Startup load failed (fail open): %s', e)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, 'interval', minutes=5)

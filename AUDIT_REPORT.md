@@ -1,0 +1,81 @@
+# AUDIT_REPORT.md
+
+Date: 2026-04-20
+Branch: claude/backtest-sell-diagnosis-2FPSX
+Scope: live stack (main.py, strategy.py, indicators.py, data.py, database.py, news_filter.py, config.py) + backtest orphans
+
+## Counts
+
+- CRITICAL: 3
+- HIGH: 7
+- MEDIUM: 10
+- LOW: 15
+- **Total: 35**
+
+## Top 5 Most Impactful
+
+1. News blackout timestamp off by 4–5h → trades fire through NFP/FOMC (news_filter.py:95-109)
+2. `active_trades` in-memory only → Railway restart drops open trades silently (main.py:32)
+3. `check_trade_result` only scans last ~4.2h of M5 → SL/TP between 4.2h–24h misreported as EXPIRED (main.py:790, 795)
+4. Two APScheduler threads mutate `active_trades` without lock → append/replace race loses trades (main.py:32, 827, 921, 1103)
+5. Session force-close window 2min wide with 2min scheduler → fire at 21:00 skips close, FTMO violation risk (main.py:837-839, 846, 1131)
+
+## CRITICAL
+
+- `news_filter._parse_event_time` strips TZ offset without converting → blackout window off by 4–5h (news_filter.py:95-109)
+- `active_trades` in-memory only, never persisted → Railway restart drops all open trades silently (main.py:32)
+- `check_trade_result` fetches only 50 M5 candles (~4.2h) → SL/TP hits between 4.2h and 24h are missed, trade marked EXPIRED (main.py:790, 795)
+
+## HIGH
+
+- `active_trades` mutated by two APScheduler threads without lock → append/replace race can drop trades (main.py:32, 827, 921, 1103)
+- Session force-close window is 2min wide (20:58–21:00) with 2min scheduler interval → fire at exactly 21:00 skips close, trade stays open past FTMO cutoff (main.py:837-839, 846, 1131)
+- `_used_ob` is a single value, not a set → only the last OB is blocked, spec says 'one-shot per OB' (strategy.py:24, 450-451, 474)
+- `is_in_cooldown_backtest` uses `COOLDOWN_AFTER_WIN` only, never LOSS → backtest/live parity broken (strategy.py:62-64)
+- `strategy._last_signal_time = 0` default → cooldown always passes on first signal after restart (strategy.py:22, 60)
+- Cross-module write `strategy._last_trade_result = result` from main.py mutates another module's private state (main.py:888-889)
+- Bare `except: pass` swallows all CSV pnl parse errors in `/stats` (main.py:535)
+
+## MEDIUM
+
+- `rsi()` uses simple mean instead of Wilder's smoothing → values diverge from TradingView/MT4 references (indicators.py:31-32)
+- `calculate_atr()` uses simple mean instead of Wilder's smoothing → SL buffer sizing off vs standard (strategy.py:284)
+- `data.CACHE` check-then-set not atomic and has no lock → two threads can issue duplicate TwelveData fetches (data.py:13-21)
+- Supabase `save_trade` retry always strips `regime` on any failure → network errors misdiagnosed as schema drift (database.py:44-59)
+- `_htf_cache` never invalidated on downstream error, stale M15/H1 data can persist up to 300s (strategy.py:25-26, 78-94)
+- `detect_orderblock` scans fixed `range(len-20, len-2)` with no OB age filter → can pick 100-candle-old mitigated blocks if `mitigated` check misses (strategy.py:203-229)
+- `news_filter` cache keyed by UTC date only, no TTL → stale events persist all day even if feed updates (news_filter.py:11-12, 37-38)
+- `_last_outside_session_log` never reset across day boundary → first 'outside session' log after midnight delayed up to 15min (main.py:1035, 1043-1045)
+- `check_trade_result` ignores exact wick sequence within a candle → SL-then-TP in same candle counts as LOSS, may misattribute results (main.py:802-815)
+- Weekly review runs Fri 21:00 UTC (cron) but Fri signals cut off at 19:00 UTC → fine, but no fallback if scheduler misses that exact minute (main.py:1132)
+
+## LOW
+
+- `RELEVANT_KEYWORDS` defined but never referenced (news_filter.py:19-25)
+- `atr()` in indicators.py never imported anywhere (indicators.py:41-57)
+- `LONDON_OPEN_UTC`/`NY_CLOSE_UTC` duplicated across 8 files (strategy.py:19-20 + 7 backtest files)
+- 6 of 8 backtest scripts use obsolete config (score 6.0, cooldown 24/48) vs live V_G 6.5/6/12 (backtest_top5.py:30-31, backtest_diagnosis.py:43-45, backtest_variants.py:81-83, backtest_variants_v2.py:39, backtest_variants_v3.py:8, backtest_main.py)
+- `_last_signal_candle = -999` magic sentinel (strategy.py:23)
+- `BACKTEST_MODE` module-level flag toggled externally, no guard (strategy.py:12)
+- `handle_command` lowercases text before dispatch → case-insensitive but undocumented (main.py:770, 776)
+- `get_candles` prints errors instead of logging (data.py:37, 56)
+- `deleteWebhook` startup call wrapped in bare `except: pass` (main.py:1141)
+- `init_csv()` runs at module import with no error handling (main.py:52)
+- `_client` Supabase singleton never refreshed → stale connection persists if Supabase restarts (database.py:9, 12-29)
+- Telegram `parse_mode=HTML` used but user input never escaped → cosmetic only, chat_id gated (main.py:434)
+- Dashboard HTML embeds `all_trades` JSON inline, no size cap → page grows unbounded with history (main.py:147, 163-189)
+- `format_signal` calls `news_filter.get_next_event()` on every signal → redundant API read, cache mitigates (main.py:1011)
+- Regime detection logged but never persisted per-tick — only on signal fire (strategy.py:483-484)
+
+## Dead Code To Delete
+
+- `backtest_main.py`
+- `backtest_variants.py`
+- `backtest_variants_v2.py`
+- `backtest_variants_v3.py`
+- `backtest_top5.py`
+- `backtest_nonsmc.py`
+- `backtest_diagnosis.py`
+- `backtest_sell_diagnosis.py`
+- `atr()` function in `indicators.py` (orphan, never imported)
+- `RELEVANT_KEYWORDS` constant in `news_filter.py` (defined, never referenced)
