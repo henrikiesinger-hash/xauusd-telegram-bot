@@ -60,8 +60,12 @@ def is_in_cooldown_live():
     return (time.time() - _last_signal_time) < cooldown
 
 def is_in_cooldown_backtest(candle_index):
-    global _last_signal_candle
-    return (candle_index - _last_signal_candle) < COOLDOWN_AFTER_WIN
+    global _last_signal_candle, _last_trade_result
+    if _last_trade_result == 'LOSS':
+        cooldown = COOLDOWN_AFTER_LOSS
+    else:
+        cooldown = COOLDOWN_AFTER_WIN
+    return (candle_index - _last_signal_candle) < cooldown
 
 def record_signal_live():
     global _last_signal_time
