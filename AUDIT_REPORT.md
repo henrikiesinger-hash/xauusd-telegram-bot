@@ -30,7 +30,9 @@ Scope: live stack (main.py, strategy.py, indicators.py, data.py, database.py, ne
 
 - [HIGH][RESOLVED] `active_trades` mutated by two APScheduler threads without lock → append/replace race can drop trades (main.py:32, 827, 921, 1103). Resolved by commit 8bff461 (active_trades_lock added; all 3 mutation sites covered — main.py:933, 1124, 1156).
 - [HIGH][RESOLVED] Session force-close window is 2min wide (20:58–21:00) with 2min scheduler interval → fire at exactly 21:00 skips close, trade stays open past FTMO cutoff (main.py:837-839, 846, 1131). Resolved by commits 1a83846 (widen predicate + misfire_grace) and f9a25f8 (cron backup at 20:58 UTC).
-- `_used_ob` is a single value, not a set → only the last OB is blocked, spec says 'one-shot per OB' (strategy.py:24, 450-451, 474)
+- [HIGH][PHASE1-RESOLVED] `_used_ob` is a single value, not a set → only the last OB is blocked, spec says 'one-shot per OB' (strategy.py:24, 450-451, 474)
+  - 2026-04-21: Phase 1 deployed (commit 1791642). Behavioral no-op: added ob_id logging at write-site + daily 07 UTC reset of _used_ob. Purpose: establish 1-2 week baseline of ob_id collision rate before Phase 2 (set swap). Railway boot verified 6 scheduler jobs, reset_used_ob active.
+  - Phase 2 decision gate: review log data after 1-2 weeks. If collision rate < 5% and round(...,0) granularity shows no near-price conflicts, proceed with set() swap. Otherwise address id granularity first.
 - `is_in_cooldown_backtest` uses `COOLDOWN_AFTER_WIN` only, never LOSS → backtest/live parity broken (strategy.py:62-64)
 - `strategy._last_signal_time = 0` default → cooldown always passes on first signal after restart (strategy.py:22, 60)
 - Cross-module write `strategy._last_trade_result = result` from main.py mutates another module's private state (main.py:888-889)
