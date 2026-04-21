@@ -1161,6 +1161,7 @@ except Exception as e:
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, 'interval', minutes=5)
 scheduler.add_job(check_active_trades, 'interval', minutes=2, misfire_grace_time=60)
+scheduler.add_job(check_active_trades, 'cron', hour=20, minute=58, misfire_grace_time=60, id='force_close_cron_backup')
 scheduler.add_job(generate_weekly_review, 'cron', day_of_week='fri', hour=21, minute=0)
 scheduler.add_job(refresh_news_events, 'cron', hour=6, minute=55)
 scheduler.start()
