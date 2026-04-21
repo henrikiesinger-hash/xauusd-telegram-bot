@@ -71,6 +71,24 @@ def record_signal_live():
     global _last_signal_time
     _last_signal_time = time.time()
 
+def record_trade_resolution(result, ts=None):
+    global _last_trade_result, _last_signal_time
+
+    if result not in ('WIN', 'LOSS'):
+        log.warning('strategy: record_trade_resolution invalid result=%s (accepted anyway)', result)
+
+    _last_trade_result = result
+
+    if ts is not None:
+        if isinstance(ts, (int, float)) and ts > 0:
+            _last_signal_time = float(ts)
+            log.info('strategy: record_trade_resolution result=%s ts=%s', result, ts)
+            return
+        log.warning('strategy: record_trade_resolution invalid ts=%s (ts unchanged)', ts)
+        return
+
+    log.info('strategy: record_trade_resolution result=%s (ts unchanged)', result)
+
 def record_signal_backtest(candle_index):
     global _last_signal_candle
     _last_signal_candle = candle_index

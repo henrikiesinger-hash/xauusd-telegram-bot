@@ -898,8 +898,7 @@ def check_active_trades():
         result = check_trade_result(trade)
 
         if result:
-            import strategy
-            strategy._last_trade_result = result
+            strategy.record_trade_resolution(result)
 
         if result:
             emoji = '✅' if result == 'WIN' else '❌'
@@ -1171,8 +1170,7 @@ def hydrate_strategy_state():
             if (isinstance(ts, (int, float)) and ts > 0
                     and isinstance(raw_result, str) and raw_result):
                 mapped = result_map.get(raw_result.upper(), 'LOSS')
-                strategy._last_signal_time = float(ts)
-                strategy._last_trade_result = mapped
+                strategy.record_trade_resolution(mapped, ts=float(ts))
                 log.info(
                     'HIGH#6 Hydration: source=Supabase/CSV ts=%s raw_result=%s mapped=%s',
                     ts, raw_result, mapped
@@ -1186,8 +1184,7 @@ def hydrate_strategy_state():
                           and t.get('timestamp') > 0]
             if timestamps:
                 ts = max(timestamps)
-                strategy._last_signal_time = float(ts)
-                strategy._last_trade_result = 'LOSS'
+                strategy.record_trade_resolution('LOSS', ts=float(ts))
                 log.info(
                     'HIGH#6 Hydration: source=open_trades ts=%s result=LOSS (conservative, no resolution yet)',
                     ts
