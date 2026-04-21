@@ -794,7 +794,7 @@ def poll_telegram():
 
 def check_trade_result(trade):
     try:
-        data = get_candles("5min", 50)
+        data = get_candles("5min", 300)
         if not data:
             return None
 

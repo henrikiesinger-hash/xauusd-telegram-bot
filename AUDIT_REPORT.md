@@ -79,3 +79,9 @@ Scope: live stack (main.py, strategy.py, indicators.py, data.py, database.py, ne
 - `backtest_sell_diagnosis.py`
 - `atr()` function in `indicators.py` (orphan, never imported)
 - `RELEVANT_KEYWORDS` constant in `news_filter.py` (defined, never referenced)
+
+## New Findings From CRITICAL #3 Analysis
+
+- [HIGH][DEFERRED] Cache in `data.py:19-21` is keyed on `interval` only, not `limit`. `get_candles("5min", 50)` can return 200 cached candles if `run_analysis` populated the cache first; conversely a cold-boot 50 silently caps subsequent 200-candle requests for 60s TTL. Latent bug affecting strategy↔trade-check consistency.
+- [INFO][RESOLVED] TwelveData credit usage verified via dashboard on 2026-04-21. Plan is Basic 8 (800/day, 8/min). Actual usage ~44/800 with minutely max 3/8. Cache TTL effectively suppresses the theoretical 1440/day upper bound. No action needed.
+- [MEDIUM][DEFERRED] SL-before-TP wick sequence within same candle (existing MEDIUM #49) touched by CRITICAL #3 fix loop but deferred by scope; requires separate intra-candle precision analysis.
