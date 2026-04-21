@@ -16,9 +16,9 @@ def get_candles(interval, limit=200):
     current_time = time.time()
 
     # 🔁 CACHE CHECK
-    if interval in CACHE:
-        if current_time - CACHE_TIME[interval] < CACHE_TTL:
-            return CACHE[interval]
+    if (interval, limit) in CACHE:
+        if current_time - CACHE_TIME[(interval, limit)] < CACHE_TTL:
+            return CACHE[(interval, limit)]
 
     url = "https://api.twelvedata.com/time_series"
 
@@ -47,8 +47,8 @@ def get_candles(interval, limit=200):
         }
 
         # 🔥 CACHE SAVE
-        CACHE[interval] = candles
-        CACHE_TIME[interval] = current_time
+        CACHE[(interval, limit)] = candles
+        CACHE_TIME[(interval, limit)] = current_time
 
         return candles
 
