@@ -854,38 +854,37 @@ def check_active_trades():
         age_hours = (time.time() - trade['timestamp']) / 3600
         trade_id = trade['timestamp']
 
-        # Session close: force close at 20:58 UTC
-        if warn_at <= minutes_utc < session_end:
+        # Session close: force close at 20:58 UTC or later (unbounded upper)
+        if minutes_utc >= close_at:
+            # Estimate PnL from current data
+            data = get_candles('5min', 1)
+            current_price = data['close'][-1] if data else trade['entry']
+
+            if trade['direction'] == 'BUY':
+                pnl = round(current_price - trade['entry'], 2)
+            else:
+                pnl = round(trade['entry'] - current_price, 2)
+
+            log.info('Session close: %s @ %s | PnL $%.2f',
+                     trade['direction'], trade['entry'], pnl)
+
+            send_telegram(
+                f'🔒 <b>SESSION CLOSE</b>\n'
+                f'━━━━━━━━━━━━━━━━━━━━\n\n'
+                f'Direction: {trade["direction"]}\n'
+                f'Entry: {trade["entry"]}\n'
+                f'Close Price: {current_price}\n'
+                f'PnL: ${pnl}\n\n'
+                f'FTMO Compliance: No open trades outside session.'
+            )
+
+            log_trade(trade, 'SESSION_CLOSE', pnl, age_hours)
+            _session_close_warned.discard(trade_id)
+            continue
+
+        # Warning at 20:50 UTC (only once per trade)
+        elif warn_at <= minutes_utc < close_at:
             mins_left = session_end - minutes_utc
-
-            if minutes_utc >= close_at:
-                # Estimate PnL from current data
-                data = get_candles('5min', 1)
-                current_price = data['close'][-1] if data else trade['entry']
-
-                if trade['direction'] == 'BUY':
-                    pnl = round(current_price - trade['entry'], 2)
-                else:
-                    pnl = round(trade['entry'] - current_price, 2)
-
-                log.info('Session close: %s @ %s | PnL $%.2f',
-                         trade['direction'], trade['entry'], pnl)
-
-                send_telegram(
-                    f'🔒 <b>SESSION CLOSE</b>\n'
-                    f'━━━━━━━━━━━━━━━━━━━━\n\n'
-                    f'Direction: {trade["direction"]}\n'
-                    f'Entry: {trade["entry"]}\n'
-                    f'Close Price: {current_price}\n'
-                    f'PnL: ${pnl}\n\n'
-                    f'FTMO Compliance: No open trades outside session.'
-                )
-
-                log_trade(trade, 'SESSION_CLOSE', pnl, age_hours)
-                _session_close_warned.discard(trade_id)
-                continue
-
-            # Warning at 20:50 UTC (only once per trade)
             if trade_id not in _session_close_warned:
                 _session_close_warned.add(trade_id)
                 send_telegram(
@@ -1161,7 +1160,7 @@ except Exception as e:
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, 'interval', minutes=5)
-scheduler.add_job(check_active_trades, 'interval', minutes=2)
+scheduler.add_job(check_active_trades, 'interval', minutes=2, misfire_grace_time=60)
 scheduler.add_job(generate_weekly_review, 'cron', day_of_week='fri', hour=21, minute=0)
 scheduler.add_job(refresh_news_events, 'cron', hour=6, minute=55)
 scheduler.start()
