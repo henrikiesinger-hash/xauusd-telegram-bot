@@ -1,6 +1,7 @@
 import logging
 import time
 import requests
+from datetime import datetime
 
 log = logging.getLogger('news_filter')
 
@@ -89,30 +90,16 @@ def fetch_todays_events():
 
 
 def _parse_event_time(time_str):
+    # Format: '2026-04-15T13:30:00-04:00' (ForexFactory, Eastern Time, DST-aware)
+    if not time_str:
+        return None
     try:
-        # Format: '2026-04-15T13:30:00-04:00' or similar
-        # Strip timezone offset and parse as UTC approximation
-        clean = time_str.replace('T', ' ')
-
-        # Handle timezone offset
-        if '+' in clean[10:]:
-            clean = clean[:clean.rindex('+')]
-        elif clean.count('-') > 2:
-            clean = clean[:clean.rindex('-')]
-
-        clean = clean.strip()
-
-        # Try common formats
-        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
-            try:
-                st = time.strptime(clean, fmt)
-                return float(time.mktime(st)) - time.timezone
-            except ValueError:
-                continue
-
+        dt = datetime.fromisoformat(time_str)
+    except (ValueError, TypeError):
         return None
-    except Exception:
+    if dt.tzinfo is None:
         return None
+    return dt.timestamp()
 
 
 # ==============================
