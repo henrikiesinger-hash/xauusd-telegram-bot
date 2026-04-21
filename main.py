@@ -520,6 +520,7 @@ def handle_command(text):
             winrate = stats["winrate"]
             total_pnl = stats["total_pnl"]
             avg = stats["avg_pnl"]
+            skipped_rows = 0
         else:
             if not os.path.exists(CSV_FILE):
                 send_telegram("No trade data yet.")
@@ -528,22 +529,33 @@ def handle_command(text):
             wins = 0
             losses = 0
             total_pnl = 0.0
+            skipped_rows = 0
 
             with open(CSV_FILE, "r") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if row["result"] == "WIN":
-                        wins += 1
-                    elif row["result"] == "LOSS":
-                        losses += 1
                     try:
-                        total_pnl += float(row["pnl"])
-                    except:
-                        pass
+                        result = row["result"]
+                        pnl_value = float(row["pnl"])
+                        if result == "WIN":
+                            wins += 1
+                        elif result == "LOSS":
+                            losses += 1
+                        total_pnl += pnl_value
+                    except (ValueError, KeyError, TypeError) as e:
+                        skipped_rows += 1
+                        log.warning(
+                            'stats: skipping row, parse failed ts=%s: %s',
+                            row.get('timestamp', '<no-ts>'), e
+                        )
 
             total = wins + losses
             winrate = round((wins / total) * 100, 1) if total > 0 else 0
             avg = round(total_pnl / total, 2) if total > 0 else 0
+
+        total_pnl_line = f"Total PnL: ${round(total_pnl, 2)}"
+        if skipped_rows > 0:
+            total_pnl_line += f" ({skipped_rows} rows skipped)"
 
         msg = (
             "<b>Performance Stats</b>\n"
@@ -551,7 +563,7 @@ def handle_command(text):
             f"Wins: {wins}\n"
             f"Losses: {losses}\n"
             f"Winrate: {winrate}%\n"
-            f"Total PnL: ${round(total_pnl, 2)}\n"
+            f"{total_pnl_line}\n"
             f"Avg/Trade: ${avg}"
         )
 
