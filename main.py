@@ -1152,6 +1152,54 @@ def refresh_news_events():
     log.info('News refresh: %s events loaded', len(events) if events else 0)
 
 
+def hydrate_strategy_state():
+    try:
+        result_map = {
+            'WIN': 'WIN',
+            'LOSS': 'LOSS',
+            'EXPIRED': 'LOSS',
+            'SESSION_CLOSE': 'LOSS',
+        }
+
+        trades = database.get_all_trades()
+
+        if trades:
+            latest = max(trades, key=lambda t: t.get('timestamp', 0) or 0)
+            ts = latest.get('timestamp')
+            raw_result = latest.get('result')
+
+            if (isinstance(ts, (int, float)) and ts > 0
+                    and isinstance(raw_result, str) and raw_result):
+                mapped = result_map.get(raw_result.upper(), 'LOSS')
+                strategy._last_signal_time = float(ts)
+                strategy._last_trade_result = mapped
+                log.info(
+                    'HIGH#6 Hydration: source=Supabase/CSV ts=%s raw_result=%s mapped=%s',
+                    ts, raw_result, mapped
+                )
+                return
+
+        open_trades = database.load_open_trades()
+        if open_trades:
+            timestamps = [t.get('timestamp') for t in open_trades
+                          if isinstance(t.get('timestamp'), (int, float))
+                          and t.get('timestamp') > 0]
+            if timestamps:
+                ts = max(timestamps)
+                strategy._last_signal_time = float(ts)
+                strategy._last_trade_result = 'LOSS'
+                log.info(
+                    'HIGH#6 Hydration: source=open_trades ts=%s result=LOSS (conservative, no resolution yet)',
+                    ts
+                )
+                return
+
+        log.info('HIGH#6 Hydration: no trades found, cold start (defaults retained)')
+
+    except Exception as e:
+        log.error('HIGH#6 Hydration FAILED, using defaults: %s', e, exc_info=True)
+
+
 try:
     restored = database.load_open_trades()
     with active_trades_lock:
@@ -1159,6 +1207,8 @@ try:
     log.info('Startup: restored %s open trade(s)', len(restored))
 except Exception as e:
     log.error('Startup load failed (fail open): %s', e)
+
+hydrate_strategy_state()
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(run_analysis, 'interval', minutes=5)
