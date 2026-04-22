@@ -515,3 +515,127 @@ V_G Defensibility bleibt **TRAGBAR**.
 - Dim G: Data-Loading M5=5000 Candles, cache-limit-unawareness
 - Phase 2 Triage nach G
 - Phase 3 Decision
+
+## Dimension G: Data-Loading Parity
+
+**Audited:** 2026-04-22
+**HEAD:** origin/main @ f23a830
+**Files:** strategy.py, main.py, data.py, indicators.py (Live),
+backtest_variants_v3.py @ 3c26c91 (V3)
+
+### Findings
+
+**G-1 EMA200 Degeneration via Input-Window Severity HIGH Status
+ACTIVE (Live-Production-Bug)**
+
+Live indicators.py L4-18 implementiert EMA klassisch iterativ
+mit SMA-Seed: ema_val = mean(data[:period]), dann Loop ueber
+data[period:] mit alpha = 2/(period+1).
+
+Live data.py L13: get_candles(interval, limit=200) Default.
+Live strategy.py L114 und L430: h1 = get_candles('1h') ohne
+Limit-Override, nutzt Default 200.
+
+Konsequenz bei len(data)=200, period=200:
+- L14: ema_val = mean(data[:200]) = SMA200
+- L15: for v in data[200:] - Slice leer
+- L16: 0 Iterationen
+- L18: return SMA200
+
+Live liefert SMA200, nicht EMA200, fuer den H1-Trend-Filter.
+
+V3 L114: fetch_twelvedata('1h', 1000) mit 1000 Candles. V3
+berechnet echten EMA200 (800 EMA-Iterationen nach 200-Candle
+Seed).
+
+Impact:
+- trend_direction divergiert zwischen Live und V3 an
+  Grenzfaellen zwischen SMA200 und echter EMA200
+- XAU/USD H1 Volatilitaet ~3-10 USD/Kerze, Differenz SMA200 vs
+  echte EMA200 typisch 1-5 USD, in Trend-Transitions bis 10-20
+  USD
+- Score-Delta bis 3.0 Pkt an Grenzfaellen (trend==direction:
+  +2.0, trend!=direction: -1.0, Flip = 3.0)
+- Nicht jeder Tick flippt, nur Grenzfaelle. Haeufigkeit ohne
+  historische Messung nicht quantifizierbar, aber strukturell
+  real.
+
+**Dies ist nicht nur Backtest-Parity sondern Live-Production-Bug.**
+Live hat seit Beginn SMA200 statt EMA200 fuer trend_direction
+gerechnet. V_G Selection erfolgte auf Basis V3-Metriken die
+echten EMA200 nutzten. Sobald Live gefixed wird, koennte V_G
+Trade-Profil sich verschieben.
+
+**G-5 Data-Freshness LOW**
+
+Live: Real-time API-Calls via TwelveData.
+V3: Historical bulk-load, single-shot.
+Strukturelle Divergenz, nicht Bug. Erwartetes Verhalten fuer
+Backtest vs Live.
+
+**G-EQUIVALENT (4 Komponenten)**
+
+- API-Call Parameter (symbol, interval, format)
+- Cache-Mechanismus (Live cached, V3 single-shot, funktional
+  aequivalent innerhalb Session)
+- Timeframe-Alignment (beide closed-candle basiert)
+- Error-Handling (beide haben Fallbacks)
+
+### Dim A Retraction Update (Post-Dim-G)
+
+Dim A Retraction (Commit 4595f4b) bestaetigte EMA-Formel
+line-by-line IDENTICAL. Das bleibt korrekt auf Formel-Ebene.
+
+G-1 zeigt jedoch dass Live mit H1 limit=200 und EMA-period=200
+einen Seed-Loop von 0 Iterationen hat, sodass ema() de facto
+SMA200 zurueckliefert. Die Formeln sind identisch, die
+Effekt-Werte divergieren weil die Input-Window-Groesse
+unterschiedlich ist.
+
+Schlussfolgerung: Dim A 'EMA IDENTICAL' gilt fuer die Formel.
+In-Effekt unterscheiden sich ema(H1, 200) Rueckgabewerte
+zwischen Live (SMA200) und V3 (echter EMA200). Diese Divergenz
+wird in Dim G als G-1 erfasst, nicht als Dim A-Retraction.
+
+### V_G Selection-Impact Post-G
+
+Ranking V_G > V6 bleibt symmetrisch betroffen und robust (beide
+Varianten laufen auf Live-Code mit gleichem SMA200-statt-EMA200
+Effekt).
+
+V_G Defensibility: **BEDINGT TRAGBAR** (zurueckgestuft von
+TRAGBAR). Begruendung: V3-Absolut-Metriken (WR, Exp, DD) nicht
+vollstaendig representativ fuer Live weil V3 echten EMA200
+rechnet, Live SMA200. Trade-Selection Bias an
+Trend-Transition-Grenzfaellen.
+
+### Combined Band A+B+C+D+E+F+G
+
+WR 35-58% realistisch 46-53% (minimal erweitert nach unten)
+Exp $1.75-6.50 realistisch $3.50-5.50 (unveraendert)
+DD $14-28 (unveraendert)
+Trades 16-22 (unveraendert)
+
+### Naechste Schritte
+
+Alle Audit-Dimensionen A-G abgeschlossen. Phase 2 Triage:
+
+Critical-Level-Findings (brauchen Phase 3 Decision):
+- G-1 HIGH ACTIVE: Live-Production-Bug EMA200 Degeneration.
+  Fix-Option: get_candles('1h') limit auf mindestens
+  period+buffer (z.B. 300-500 fuer EMA200 Konvergenz)
+- E-1 HIGH DEFERRED: TP-Distance/RR Divergenz
+- D-1 HIGH ACTIVE: V3 _used_ob Akkumulation
+
+Medium-Level:
+- B-1, C-1, C-2, C-5 MEDIUM
+- E-1-PnL Bias
+
+Deferred Backlog bleibt:
+- C-3 LOW ACTIVE
+- C-5 MEDIUM ACTIVE
+- D-1 HIGH ACTIVE (V3-Script)
+
+Phase 3 Decision: V_G akzeptieren wie ist ODER G-1 fix (
+minimal-invasiv) + optional E-1 fix + Re-Backtest auf gefixter
+Live-Baseline.
