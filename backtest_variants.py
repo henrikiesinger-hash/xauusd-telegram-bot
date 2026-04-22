@@ -553,6 +553,23 @@ def run_backtest(m5, m15, h1, config):
 
             if closed:
                 active_trade = None
+            elif (current_time.weekday() == 4 and
+                  current_time.hour == 20 and
+                  current_time.minute >= 58):
+                # Friday weekend-gap parity: simulates Henri
+                # manual Friday close (no auto-close in live code)
+                current_price = m5.iloc[i]['close']
+                if active_trade['direction'] == 'BUY':
+                    pnl = current_price - active_trade['entry']
+                else:
+                    pnl = active_trade['entry'] - current_price
+                result = 'WIN' if pnl > 0 else 'LOSS'
+                trades.append({**active_trade, 'result': result,
+                               'pnl': pnl,
+                               'duration_candles': i - active_trade['open_idx']})
+                last_result = result
+                active_trade = None
+                continue
             elif i - active_trade['open_idx'] > 288:
                 # Live parity: main.py L939 EXPIRED logs pnl=0 (break-even)
                 pnl = 0
