@@ -319,3 +319,83 @@ V_G live performance should be adjusted downward by ~3-7 pp WR,
 - Dim F: Indicator thresholds in score calc (partly covered by
   Dim A + C)
 - Dim G: Data-loading M5 = 5000 candles
+
+## Retraction — Finding A-1 (EMA SHIFTED) is INVALIDATED (2026-04-22)
+
+### Retraction
+
+Finding A-1 from the Dim A audit (committed 8133c44) is RETRACTED.
+
+The Finding claimed Live EMA uses `np.convolve` with full-window
+exponential weights, diverging from V3 iterative SMA-seeded EMA by
+up to ~10 points on boundary candles in period=200 worst case.
+
+**This is FALSE.** Verification on origin/main @ 9b50149 shows:
+
+Live EMA implementation (indicators.py L4-17):
+
+```python
+def ema(data, period):
+    data = np.array(data, dtype=float)
+
+    if len(data) == 0:
+        return 0.0
+
+    if len(data) < period:
+        return float(data[-1])
+
+    alpha = 2.0 / (period + 1)
+    ema_val = float(np.mean(data[:period]))
+    for v in data[period:]:
+        ema_val = alpha * float(v) + (1.0 - alpha) * ema_val
+
+    return float(ema_val)
+```
+
+This is classical iterative EMA with `alpha = 2 / (period + 1)`,
+SMA-seeded on the first `period` samples, then iterated. It is
+mathematically identical to V3 EMA up to floating-point roundoff.
+
+### Root Cause
+
+The Dim A audit was run against a stale local main-Ref (85bfff4,
+pre-HIGH-Sweep). The local `main` branch had not been fast-forwarded
+to origin/main. When Dim B and Dim C audits were corrected to use
+`git show 9b50149:strategy.py`, the indicators.py file was not
+re-verified. The `np.convolve` claim originated from a misreading of
+the stale local state.
+
+### Corrected Dim A Verdict
+
+- EMA math: **IDENTICAL** (was: SHIFTED boundary-BREAKING)
+- RSI math: IDENTICAL (unchanged, bit-identical <1e-14)
+- ATR math: IDENTICAL (unchanged)
+- `trend_direction` logic (strategy.py L174-186): unchanged, binary
+  gate on `e50 > e200` / `e50 < e200`, calls the iterative EMA above.
+  Live and V3 flip trend_direction on the same M5 candle.
+
+### Consequences
+
+- The estimated WR +/- 3pp impact attributed to A-1 is WITHDRAWN.
+- The combined worst-case band committed in 8133c44 was opened too
+  far downward. Realistic band narrows to B+C+D findings alone.
+
+### Revised Combined Worst-Case Impact Envelope for V_G (B+C+D only)
+
+- WR: 37-60%, realistic center 48-56%
+- Exp: $1.75-$6.50, realistic center $3.50-$5.50
+- DD: $14-$28
+- Trade-count: 16-22
+
+### V_G Selection Defensibility
+
+Unchanged: BEDINGT TRAGBAR. Relative ranking V_G > V6 remains valid.
+Absolute metrics carry +/- 5pp WR / +/- $2 Exp / +/- $6 DD uncertainty.
+
+### Process Correction
+
+All future dimension audits must explicitly verify they are reading
+current origin/main state before publishing findings. Stale local
+refs produced a false BREAKING claim that propagated through three
+subsequent commits (8133c44 Dim A+B+C, 0cdc677 Dim D) before
+correction.
