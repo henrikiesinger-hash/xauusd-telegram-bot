@@ -232,3 +232,90 @@ engine recommended after 20-trade live-series, not before.
 - Dim E: SL/TP Structural vs Simple
 - Dim F: Indicator Thresholds in Score Calculation
 - Dim G: Data-Loading (M5=5000 candles)
+
+## Backtest-Parity Audit — Dim D Findings (2026-04-22)
+
+Scope: Static code-parity audit of OB-Detection logic between Live
+(`origin/main @ 9b50149`) and V3 backtest script
+(`3c26c91:backtest_variants_v3.py`). Scope covered: detect_orderblock
+body, mitigation check, displacement ratio, entry-gate
+(range vs midpoint), `_used_ob` one-shot gate and reset logic.
+
+### Summary
+
+`detect_orderblock` is LINE-BY-LINE IDENTICAL between Live
+(strategy.py:L225-258) and V3 (L250-273). Mitigation check,
+displacement ratio (body * 2), 3-candle forward window,
+20-candle-back lookup, 0.01 min-body filter, range definition
+(lows[i], highs[i]) — all bit-identical. Entry-gate for V_G
+semantically identical (Midpoint Mode, Live hardcoded, V3
+config-gated with `ob_midpoint: True`).
+
+Single substantial divergence: `_used_ob` lifecycle.
+
+### Findings
+
+**D-1 — `_used_ob` reset asymmetry**
+- Severity: HIGH
+- Status: ACTIVE
+- Live: daily 07:00 UTC cron `strategy.reset_used_ob()` via
+  `scheduler.add_job` (main.py:L1228-1233) clears `_used_ob = None`
+  every trading day at London Open.
+- V3: no reset. `used_ob` is function-local in `run_backtest`
+  (L437), initialized to None once per variant-run, accumulates
+  over the full 60-day backtest.
+- Consequence: an unmitigated OB whose rounded bounds tuple
+  (round(ob_low, 0), round(ob_high, 0)) was used on day 3 remains
+  blocked in V3 until day 60. In Live the same tuple would clear
+  the next morning.
+- Key-collision risk: OB bounds rounded to integer dollar.
+  XAUUSD OB ranges typically 3-12 dollars, recurring zones
+  common in 60-day window.
+- Estimated V3 undercounting: 2-5 signals missed over 60 days.
+- Bias direction: V3 conservative, Live more signals.
+- Reality check: Live V_G 4 trades in 3 days (2026-04-20 to
+  2026-04-22) scaled to 60 days = ~80 trades projection, vs V3
+  16 trades. Significant delta. Sample size n=4 too small for
+  firm conclusion, but direction consistent with D-1 bias.
+
+**D-2 — Entry-gate flexibility divergent (V_G-irrelevant)**
+- Severity: LOW
+- Status: DEFERRED
+- Live hardcodes Midpoint-Gate (strategy.py:L469-472).
+- V3 config-flag `ob_midpoint` with Range-Fallback branch
+  (V3:L380-388).
+- V_G baseline `'ob_midpoint': True` -> Midpoint branch active,
+  semantically identical to Live.
+- Divergence only relevant if Non-V_G variants toggle False.
+  Zero V_G impact.
+
+### Combined A+B+C+D Worst-Case Impact Envelope for V_G
+
+Revised from A+B+C band:
+- WR: 37-60% (realistic center shifts from 50-59% to 48-57%)
+- Exp: $1.75-$6.50 (realistic center shifts from $4-$6 to
+  $3.50-$5.50)
+- DD: $12-$22 widens to $14-$28 (D-1 adds upside trade count
+  risk)
+- Trade-count: 14-18 widens to 16-22 (D-1 adds signals in
+  Live that V3 missed)
+
+Dim D widens the band asymmetrically: all four dimensions
+(A, B, C, D) bias V3 toward optimistic V_G predictions for V_G
+absolute metrics. No dimension biases V3 pessimistic. Therefore
+Live-realized V_G metrics should systematically land below V3
+predictions, not scatter around them.
+
+### V_G Selection Defensibility
+
+Relative ranking V_G > V6 remains valid (all V3 variants share
+the same `used_ob` accumulation bias). Absolute expectations for
+V_G live performance should be adjusted downward by ~3-7 pp WR,
+~$1-2 expectancy.
+
+### Dimensions Remaining
+
+- Dim E: SL/TP structural vs simple computation — NEXT
+- Dim F: Indicator thresholds in score calc (partly covered by
+  Dim A + C)
+- Dim G: Data-loading M5 = 5000 candles
