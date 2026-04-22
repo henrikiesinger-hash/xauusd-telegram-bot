@@ -79,8 +79,9 @@ VARIANTS = {
 }
 
 SCORE_THRESHOLD = 6.0
-COOLDOWN_AFTER_WIN = 24
-COOLDOWN_AFTER_LOSS = 48
+# Live parity: strategy.py L15-16 V_G uses 6/12 (M5-candles)
+COOLDOWN_AFTER_WIN = 6
+COOLDOWN_AFTER_LOSS = 12
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
 
@@ -553,6 +554,11 @@ def run_backtest(m5, m15, h1, config):
             if closed:
                 active_trade = None
             elif i - active_trade['open_idx'] > 288:
+                # Live parity: main.py L939 EXPIRED logs pnl=0 (break-even)
+                pnl = 0
+                trades.append({**active_trade, 'result': 'LOSS', 'pnl': pnl,
+                               'duration_candles': i - active_trade['open_idx']})
+                last_result = 'LOSS'
                 active_trade = None
 
         if active_trade is not None:
