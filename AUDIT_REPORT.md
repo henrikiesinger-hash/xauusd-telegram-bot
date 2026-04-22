@@ -94,3 +94,141 @@ Scope: live stack (main.py, strategy.py, indicators.py, data.py, database.py, ne
 - [HIGH][RESOLVED] Cache in `data.py:19-21` is keyed on `interval` only, not `limit`. `get_candles("5min", 50)` can return 200 cached candles if `run_analysis` populated the cache first; conversely a cold-boot 50 silently caps subsequent 200-candle requests for 60s TTL. Latent bug affecting strategy↔trade-check consistency. Resolved by commit 351cd08 (cache key changed to (interval, limit) tuple at all 5 usage sites in data.py).
 - [INFO][RESOLVED] TwelveData credit usage verified via dashboard on 2026-04-21. Plan is Basic 8 (800/day, 8/min). Actual usage ~44/800 with minutely max 3/8. Cache TTL effectively suppresses the theoretical 1440/day upper bound. No action needed.
 - [MEDIUM][DEFERRED] SL-before-TP wick sequence within same candle (existing MEDIUM #49) touched by CRITICAL #3 fix loop but deferred by scope; requires separate intra-candle precision analysis.
+
+## Backtest-Parity Audit — Dim A + B + C Findings (2026-04-22)
+
+Scope: Static code-parity audit between Live (`origin/main @ 9b50149`,
+post-HIGH-sweep) and V3 backtest script
+(`3c26c91:backtest_variants_v3.py`). Dimensions A (Indicator Math),
+B (last_result / Cooldown propagation), C (Session / Friday-Stop /
+Session-Close). V_G live-deployment = manual parameter mutation of
+`strategy.py` (commit e1dbee1), not a V3 code-merge. Findings below
+affect confidence in V_G backtest metrics (WR 56.2%, Exp $5.75,
+DD $16) but do not hard-invalidate V_G selection (relative ranking
+vs V6 / other variants is robust because Dim A/B/C artefacts hit all
+variants uniformly in the same batch backtest engine).
+
+### Findings
+
+**A-1 — EMA math SHIFTED (boundary-BREAKING-conditional)**
+- Severity: MEDIUM
+- Status: DEFERRED
+- Live uses `np.convolve` with full-window exponential weights.
+  V3 uses classical iterative SMA-seed + k=2/(period+1). Worst-case
+  period=200: ~10 price-points spread on boundary candles.
+- Downstream: `trend_direction` binary gate flips 20-50 M5-candles
+  later in V3 than Live during sideways phases, nudging V3 toward
+  more BUY signals during Feb-Apr 2026 uptrend.
+- Impact envelope: WR +/- 3pp, Exp +/- $1, DD $12-$20.
+- RSI and ATR math confirmed IDENTICAL (<1e-14).
+
+**B-1 — Expiry / Session-Close Result-Mapping divergent (BEDINGT BREAKING)**
+- Severity: MEDIUM (bedingt BREAKING for Hang-Trade scenarios)
+- Status: DEFERRED
+- V3 L487-488: `elif i - active_trade['open_idx'] > 288:
+  active_trade = None` — no `trades.append`, no `last_result` update.
+  Expired trades in V3 neither count as a trade nor as a LOSS; next
+  cooldown uses the previous `last_result`.
+- Live: `hydrate_strategy_state()` L1166-1199 maps
+  `EXPIRED -> LOSS` and `SESSION_CLOSE -> LOSS` via `result_map`
+  L1171-1172 at bot startup. `check_active_trades` logs
+  `SESSION_CLOSE` L895 and `EXPIRED` L939 into CSV/Supabase.
+- Sub-findings 1-9 of Dim B all IDENTICAL or EQUIVALENT (constants
+  6/12, branching on last_result, candle-index units within
+  backtest-path, str type + WIN default, set-timing on entry candle,
+  init-value -999/-1000 both cooldown-clear, sync-vs-async result
+  propagation blocked by open-trade gate, list+lock vs single-var
+  semantically identical, hydration cold-start both 'WIN').
+- Impact: 1-3 of V_G 16 trades potentially divergent. WR-risk -6pp
+  to -19pp worst-case. DD-direction uncertain (SESSION_CLOSE PnL
+  often smaller than full-SL, could lower DD in Live).
+
+**C-1 — No 20:58 UTC Force-Close in V3 (DIVERGENT)**
+- Severity: MEDIUM (downgraded from HIGH; overlaps with B-1)
+- Status: DEFERRED
+- Live `check_active_trades` L871-895 flat-closes open trades at
+  20:58 UTC via current-price PnL and logs `SESSION_CLOSE`. V3
+  L447-448 only `continue`s the run-loop at session-end, leaving
+  `active_trade` open for the next active candle (next day 7 UTC,
+  skipping weekend).
+- Quantification: 0-2 of V_G 16 trades affected. V3-biased-optimistic
+  on hang-trades that recover over weekend; no bias on strictly
+  session-compliant trades.
+
+**C-2 — 24h-Expiry semantic divergence (DIVERGENT)**
+- Severity: MEDIUM
+- Status: DEFERRED
+- Live main.py:L938-940: `age_hours > 24` -> `log_trade(trade,
+  'EXPIRED', 0, age_hours)` — appears in CSV with PnL=0.
+- V3 L488: `elif i - active_trade['open_idx'] > 288:
+  active_trade = None` — silent drop, no trades.append.
+- Impact: 0-1 V_G trades affected. Live counts expired as 0-PnL in
+  WR-denominator; V3 excludes from denominator entirely.
+
+**C-3 — log_trade on SESSION_CLOSE / EXPIRED misses
+record_trade_resolution call in running process**
+- Severity: LOW
+- Status: ACTIVE (cleanup candidate, defer fix until Phase 3 decision)
+- main.py:L895 (`log_trade(trade, 'SESSION_CLOSE', ...)`) and L939
+  (`log_trade(trade, 'EXPIRED', ...)`) do not call
+  `strategy.record_trade_resolution(...)` in the running process.
+  `_last_trade_result` remains at pre-event value.
+- Practically cosmetic: next signal-eligible candle is 10+ hours
+  away (next day 7 UTC), cooldown of 6*300s / 12*300s long expired.
+  Bot-restart hydration L1166-1199 covers the restart case.
+- Fix candidate (NOT TO BE APPLIED NOW): add
+  `strategy.record_trade_resolution('LOSS')` after L895 and L940.
+
+**C-4 — No Telegram 20:50 warning in V3 (cosmetic)**
+- Severity: LOW
+- Status: DEFERRED (N/A for parity; Live-only UX)
+
+**C-5 — Force-close cron missing day_of_week filter (Live runtime issue)**
+- Severity: MEDIUM
+- Status: ACTIVE (runtime Live issue, out-of-scope for V3 parity)
+- main.py:L1225:
+  `scheduler.add_job(check_active_trades, 'cron', hour=20,
+  minute=58, misfire_grace_time=60, id='force_close_cron_backup')`
+  — no `day_of_week` parameter, fires Mo-So.
+- Edge-case: Bot restart Fri-Sat with lingering open trade -> Sat
+  20:58 cron fires on stale weekend TwelveData price -> unreliable
+  PnL estimate logged to CSV/Supabase.
+- Current live /stats WR 16.7% / -$32 / 6 trades may be partly
+  tainted by daily SESSION_CLOSE events on Tue/Wed/Thu that should
+  only trigger on Fri per FTMO gap-trading rationale.
+- Fix candidate (NOT TO BE APPLIED NOW):
+  `scheduler.add_job(check_active_trades, 'cron', day_of_week='fri',
+  hour=20, minute=58, ...)`.
+
+### RSI-75/25 Threshold — IDENTICAL
+
+Signal-block thresholds Live strategy.py:L460/462 (75/25) match V3
+config `rsi_block_buy`/`rsi_block_sell` (L43/44 -> L371/373) for V_G
+baseline. Score-bonus bands 30-55 bullish / 45-70 bearish identical
+Live:L379/381 vs V3:L318/320. Combined with Dim-A RSI math
+IDENTICAL: RSI dimension fully parity-compliant.
+
+### Combined A+B+C Worst-Case Impact Envelope for V_G
+
+- WR: 56.2% -> live-realised band 37-60% (worst-case overlap of
+  Dim A shift, Dim B expiry drops, Dim C session-close flats;
+  realistically 50-59%)
+- Exp: $5.75 -> $1.75-$6.50 (realistically $4-$6)
+- DD: $16 -> $12-$22
+- Trade-count: 16 -> 14-18
+
+### V_G Selection Defensibility: BEDINGT TRAGBAR
+
+V_G was selected over V6 on relative-score-threshold delta, which is
+robust against Dim A/B/C artefacts because all variants run through
+the same V3 engine. Absolute metrics carry +/- 5pp WR / +/- $2 Exp /
++/- $6 DD uncertainty margin. Re-backtest with live-codebase-aligned
+engine recommended after 20-trade live-series, not before.
+
+### Dimensions Remaining
+
+- Dim D: OB-Detection parity (mitigation check, displacement ratio,
+  OB midpoint entry, _used_ob one-shot gate) — NEXT
+- Dim E: SL/TP Structural vs Simple
+- Dim F: Indicator Thresholds in Score Calculation
+- Dim G: Data-Loading (M5=5000 candles)
