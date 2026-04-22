@@ -111,7 +111,7 @@ def get_htf_data():
         return _htf_cache["data"]
 
     m15 = get_candles("15min")
-    h1 = get_candles("1h")
+    h1 = get_candles("1h", limit=500)
 
     if not m15 or not h1:
         return None
@@ -427,7 +427,7 @@ def generate_signal(data_m5, candle_index=0):
 
     if BACKTEST_MODE:
         m15 = get_candles("15min")
-        h1 = get_candles("1h")
+        h1 = get_candles("1h", limit=500)
     else:
         htf = get_htf_data()
         if htf is None:
