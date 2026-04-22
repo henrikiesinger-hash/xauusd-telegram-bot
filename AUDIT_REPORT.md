@@ -399,3 +399,67 @@ current origin/main state before publishing findings. Stale local
 refs produced a false BREAKING claim that propagated through three
 subsequent commits (8133c44 Dim A+B+C, 0cdc677 Dim D) before
 correction.
+
+## Dimension E: SL/TP-Kalkulation Parity
+
+**Audited:** 2026-04-22
+**HEAD:** origin/main @ 4595f4b
+**Files:** strategy.py (Live), backtest_variants_v3.py @ 3c26c91 (V3)
+
+### Findings
+
+**E-1 TP-Distance/RR DIVERGENT BREAKING Severity HIGH Status DEFERRED**
+
+Live strategy.py L339-340 nutzt strukturelle TP via
+find_swing_highs/_lows mit Fallback sl_dist * 3. L347-348 setzt
+min-RR-Floor sl_dist * 2. Beide Multiplier hardcoded, nicht
+config-gated, nicht score-abhaengig.
+
+V3 backtest_variants_v3.py L337-338 nutzt fixe TP sl_dist *
+min_rr. Fuer V_G min_rr=2.0 konstant.
+
+Bias-Direction:
+- V3 optimistisch fuer Live-WR (engere TP = mehr Hits in V3,
+  3-8pp hoeher als Live real)
+- V3 pessimistisch fuer Live-Per-Win-PnL (fixe TP*2 vs Live
+  strukturell bis *5 = 25-50% niedriger in V3)
+- Net-Expectancy ungefaehr gleich oder leicht hoeher in Live
+
+**E-2 SL-Seite IDENTICAL**
+
+(a) Structural SL Base, (b) ATR-Puffer, (c) SL-Clamp 8-12,
+(e) Branch-Gate: alle IDENTICAL. SL-Seite komplett bit-identisch
+zwischen Live und V3.
+
+### V_G Selection-Impact Post-E
+
+Relative-Ranking V_G > V6 robust trotz E-1. calculate_sl_tp L318
+hat keinen score-Parameter. Body L319-349 referenziert score
+nicht (score erst ab L354 in calculate_score). V_G und V6
+bekommen bei identischem Entry identische TP-Distances.
+
+Defensibility: TRAGBAR (hochgestuft von BEDINGT TRAGBAR).
+Begruendung: Relative-Ranking unberuehrt, Expectancy robust unter
+Bias-Kombination, WR-Bias betrifft V_G und V6 symmetrisch.
+
+### Combined Bias-Matrix (nach Dim E)
+
+- B-1 Expiry-Mapping: V3 optimistisch fuer Live-WR
+- C-1 Force-Close: V3 optimistisch fuer Live-WR
+- D-1 used_ob-Akkumulation: V3 pessimistisch fuer Live-Trade-Count
+- E-1-WR-Component: V3 optimistisch fuer Live-WR
+- E-1-PnL-Component: V3 pessimistisch fuer Live-Per-Win-PnL
+
+### Revidiertes Combined Band A+B+C+D+E
+
+WR 37-58% realistisch 48-53% (revidiert von 48-56%, E-1-WR stackt
+mit B-1/C-1)
+Exp $1.75-6.50 realistisch $3.50-5.50 (unveraendert)
+DD $14-28 (unveraendert)
+Trades 16-22 (unveraendert)
+
+### Naechste Schritte
+
+- Dim F: Indicator-Thresholds im Score-Calc
+- Dim G: Data-Loading M5=5000 Candles
+- Phase 2 Triage, Phase 3 Decision
