@@ -463,3 +463,55 @@ Trades 16-22 (unveraendert)
 - Dim F: Indicator-Thresholds im Score-Calc
 - Dim G: Data-Loading M5=5000 Candles
 - Phase 2 Triage, Phase 3 Decision
+
+## Dimension F: Indicator-Thresholds in Score-Calc
+
+**Audited:** 2026-04-22
+**HEAD:** origin/main @ 210881f
+**Files:** strategy.py (Live), backtest_variants_v3.py @ 3c26c91 (V3)
+
+### Findings
+
+**F-IDENTICAL (8 Komponenten)**
+
+calculate_score byte-equivalent modulo Quote-Style und
+Blank-Lines. Alle aktiven Score-Komponenten (inklusive
+RSI-Baender aus Dim C) IDENTICAL.
+
+**F-N/A (5 Komponenten symmetrisch absent)**
+
+Folgende Score-Komponenten existieren in WEDER Live noch V3:
+- CHoCH-Score: weder Live L354-384 noch V3 L300-322
+- Momentum-Score: kein Candle-Body/Range-Check in Score
+- Volume-Score: TwelveData Volume nicht konsumiert in Score-Pfad
+- Session-Score/Bonus: nur binary Gate (is_active_session Live
+  L32, V3 inline), kein Score-Bonus
+- ATR-Score: ATR nur in SL-Puffer-Pfad (calculate_sl_tp), nicht
+  im Score
+
+Keine LIVE-ONLY oder V3-ONLY Asymmetrie.
+
+### Severity
+
+Zero BREAKING/DIVERGENT Findings. Null CRITICAL, null HIGH, null
+MEDIUM, null LOW.
+
+### V_G Selection-Impact Post-F
+
+V_G-Trade-Frequency und -Qualitaet durch Dim F unveraendert.
+Combined Band A+B+C+D+E bleibt gueltig.
+
+### Combined Band A+B+C+D+E+F
+
+WR 37-58% realistisch 48-53%
+Exp $1.75-6.50 realistisch $3.50-5.50
+DD $14-28
+Trades 16-22
+
+V_G Defensibility bleibt **TRAGBAR**.
+
+### Naechste Schritte
+
+- Dim G: Data-Loading M5=5000 Candles, cache-limit-unawareness
+- Phase 2 Triage nach G
+- Phase 3 Decision
