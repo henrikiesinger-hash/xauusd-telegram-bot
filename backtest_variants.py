@@ -518,6 +518,10 @@ def run_backtest(m5, m15, h1, config):
         if hour < LONDON_OPEN_UTC or hour >= NY_CLOSE_UTC:
             continue
 
+        # Live parity: main.py daily cron 07:00 UTC reset_used_ob()
+        if current_time.hour == 7 and current_time.minute == 0:
+            used_ob = None
+
         # Check active trade
         if active_trade is not None:
             high = m5.iloc[i]['high']
