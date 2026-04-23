@@ -28,62 +28,24 @@ SYMBOL = 'XAU/USD'
 BACKTEST_DAYS = 60
 
 VARIANTS = {
-    'V1_Baseline_WeekOne': {
-        'chop_filter': False,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V2_CurrentLive': {
-        'chop_filter': True,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V3_FourFixes_NoChop': {
-        'chop_filter': False,
-        'entry_confirmation': True,
-        'ob_midpoint': True,
-        'structural_sl_tp': True,
-    },
-    'V4_FourFixes_WithChop': {
-        'chop_filter': True,
-        'entry_confirmation': True,
-        'ob_midpoint': True,
-        'structural_sl_tp': True,
-    },
-    'V5_OnlyEntryConfirm': {
-        'chop_filter': False,
-        'entry_confirmation': True,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V6_OnlyOBMidpoint': {
+    'V_G_LiveParity': {
         'chop_filter': False,
         'entry_confirmation': False,
         'ob_midpoint': True,
         'structural_sl_tp': False,
-    },
-    'V7_OnlyStructuralSLTP': {
-        'chop_filter': False,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': True,
-    },
-    'V8_Chop_Plus_StructuralSLTP': {
-        'chop_filter': True,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': True,
     },
 }
 
-SCORE_THRESHOLD = 6.0
+# Live parity: strategy.py L13 V_G SCORE_THRESHOLD
+SCORE_THRESHOLD = 6.5
 # Live parity: strategy.py L15-16 V_G uses 6/12 (M5-candles)
 COOLDOWN_AFTER_WIN = 6
 COOLDOWN_AFTER_LOSS = 12
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
+# Live parity: strategy.py is_active_session FTMO gap rule
+# (Fri >= 19 UTC: no new signals)
+FRIDAY_SIGNAL_CUTOFF_UTC = 19
 
 # ==============================
 # DATA LOADING (TwelveData)
@@ -352,20 +314,37 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
 # ==============================
 
 def calculate_sl_tp_simple(direction, price, highs, lows, closes):
+    # Live parity: strategy.py calculate_sl_tp L318-349 verbatim port
     atr_val = calculate_atr(highs, lows, closes)
+
     if direction == 'bullish':
         swing_lows = find_swing_lows(lows, 3, 3)
         structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
-        sl_dist = price - (structure_sl - atr_val * 0.3)
+        sl = structure_sl - atr_val * 0.3
+        sl_dist = price - sl
     else:
         swing_highs = find_swing_highs(highs, 3, 3)
         structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
-        sl_dist = (structure_sl + atr_val * 0.3) - price
+        sl = structure_sl + atr_val * 0.3
+        sl_dist = sl - price
+
     sl_dist = max(8.0, min(12.0, sl_dist))
     sl = price - sl_dist if direction == 'bullish' else price + sl_dist
-    tp_dist = sl_dist * 2
+
+    if direction == 'bullish':
+        targets = [s[1] for s in find_swing_highs(highs, 3, 3) if s[1] > price]
+        tp_dist = min(targets) - price if targets else sl_dist * 3
+    else:
+        targets = [s[1] for s in find_swing_lows(lows, 3, 3) if s[1] < price]
+        tp_dist = price - max(targets) if targets else sl_dist * 3
+
+    if tp_dist < sl_dist * 2:
+        tp_dist = sl_dist * 2
+
     tp = price + tp_dist if direction == 'bullish' else price - tp_dist
-    return sl, tp, sl_dist, 2.0
+    rr = round(tp_dist / sl_dist, 1)
+
+    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr
 
 
 def calculate_sl_tp_structural(direction, price, highs, lows):
@@ -435,9 +414,10 @@ def generate_signal(data_m5, data_m15, data_h1, config, candle_index,
 
     direction = trend
     rsi_val = rsi(c5)
-    if direction == 'bullish' and rsi_val > 60:
+    # Live parity: strategy.py generate_signal RSI hard-filter 75/25
+    if direction == 'bullish' and rsi_val > 75:
         return None, used_ob, last_signal_idx
-    if direction == 'bearish' and rsi_val < 40:
+    if direction == 'bearish' and rsi_val < 25:
         return None, used_ob, last_signal_idx
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
@@ -583,6 +563,11 @@ def run_backtest(m5, m15, h1, config):
                 active_trade = None
 
         if active_trade is not None:
+            continue
+
+        # Live parity: strategy.py is_active_session FTMO gap rule
+        # (Fri >= 19 UTC: no new signals, existing trades unaffected)
+        if current_time.weekday() == 4 and hour >= FRIDAY_SIGNAL_CUTOFF_UTC:
             continue
 
         # Generate signal
