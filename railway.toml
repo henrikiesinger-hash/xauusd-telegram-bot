@@ -1,6 +1,0 @@
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-startCommand = "python backtest_variants.py"
-restartPolicyType = "NEVER"
