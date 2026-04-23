@@ -37,7 +37,7 @@ trade_log.csv    → Persistent trade history (CSV backup)
 1. M15 Order Block detected and price past OB midpoint (V_G config)
 1. OB not previously used (one-shot per OB)
 1. RSI filter: BUY only if RSI < 75, SELL only if RSI > 25
-1. Score ≥ 6.5/10
+1. Score ≥ 5.5/10
 
 ### Scoring System (max ~10 points)
 
@@ -131,7 +131,7 @@ Run /recap at session start to refresh context from previous session.
 ## Current Status
 
 - **Account:** FTMO 80k 1-Step Standard (Order 23264598, opened 2026-04-09)
-- **Live Config:** V_G_Score65 (Score 6.5, Cooldown 6/12, RSI 75/25, OB Midpoint ON)
+- **Live Config:** V_G_Score65 (Score 5.5, Cooldown 6/12, RSI 75/25, OB Midpoint ON)
 - **Backup:** Branch v6-live-backup-20260418 at commit 8d2decb (FTMO-Fix V6 state)
 - **Regime Detection:** Shadow mode active, logging only, no filtering
 - **Next:** Monitor V_G live performance (2 weeks), compare vs backtest

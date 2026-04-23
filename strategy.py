@@ -10,7 +10,7 @@ log = logging.getLogger("strategy")
 # ==============================
 
 BACKTEST_MODE = False
-SCORE_THRESHOLD = 6.5
+SCORE_THRESHOLD = 5.5
 
 COOLDOWN_AFTER_WIN = 6
 COOLDOWN_AFTER_LOSS = 12
