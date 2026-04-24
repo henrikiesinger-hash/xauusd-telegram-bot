@@ -27,40 +27,41 @@ if not TWELVE_DATA_KEY:
 SYMBOL = 'XAU/USD'
 
 VARIANTS = {
-    'V_G_S55': {
+    'V_G_S55_BASELINE': {
         'score_threshold': 5.5,
         'chop_filter': False,
         'entry_confirmation': False,
         'ob_midpoint': True,
         'structural_sl_tp': False,
+        'rejection_confirmation': False,
+        'freshness_filter': False,
     },
-    'V_G_S60': {
-        'score_threshold': 6.0,
-        'chop_filter': False,
+    'V_G_S55_CHOP': {
+        'score_threshold': 5.5,
+        'chop_filter': True,
         'entry_confirmation': False,
         'ob_midpoint': True,
         'structural_sl_tp': False,
+        'rejection_confirmation': False,
+        'freshness_filter': False,
     },
-    'V_G_S65': {
-        'score_threshold': 6.5,
-        'chop_filter': False,
+    'V_G_S55_CHOP_REJECT': {
+        'score_threshold': 5.5,
+        'chop_filter': True,
         'entry_confirmation': False,
-        'ob_midpoint': True,
+        'ob_midpoint': False,
         'structural_sl_tp': False,
+        'rejection_confirmation': True,
+        'freshness_filter': False,
     },
-    'V_G_S70': {
-        'score_threshold': 7.0,
-        'chop_filter': False,
+    'V_G_S55_CHOP_REJECT_FRESH': {
+        'score_threshold': 5.5,
+        'chop_filter': True,
         'entry_confirmation': False,
-        'ob_midpoint': True,
+        'ob_midpoint': False,
         'structural_sl_tp': False,
-    },
-    'V_G_S75': {
-        'score_threshold': 7.5,
-        'chop_filter': False,
-        'entry_confirmation': False,
-        'ob_midpoint': True,
-        'structural_sl_tp': False,
+        'rejection_confirmation': True,
+        'freshness_filter': True,
     },
 }
 
@@ -449,12 +450,29 @@ def generate_signal(data_m5, data_m15, data_h1, config, candle_index,
     if direction == 'bearish' and rsi_val < 25:
         return None, used_ob, last_signal_idx
 
+    atr_val = calculate_atr(h5, l5, c5)
+
+    if config['freshness_filter']:
+        if direction == 'bullish' and (max(h5[-3:]) - c5[-1]) > 1.5 * atr_val:
+            return None, used_ob, last_signal_idx
+        if direction == 'bearish' and (c5[-1] - min(l5[-3:])) > 1.5 * atr_val:
+            return None, used_ob, last_signal_idx
+
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
     if ob_low is None:
         return None, used_ob, last_signal_idx
 
-    if config['ob_midpoint']:
-        mid = (ob_low + ob_high) / 2
+    mid = (ob_low + ob_high) / 2
+
+    if config['rejection_confirmation']:
+        prev_close = c5[-2]
+        if direction == 'bullish':
+            if not (l5[-1] < mid and c5[-1] > mid and c5[-1] > prev_close):
+                return None, used_ob, last_signal_idx
+        else:
+            if not (h5[-1] > mid and c5[-1] < mid and c5[-1] < prev_close):
+                return None, used_ob, last_signal_idx
+    elif config['ob_midpoint']:
         if direction == 'bullish' and price > mid:
             return None, used_ob, last_signal_idx
         if direction == 'bearish' and price < mid:
