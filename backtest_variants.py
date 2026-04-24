@@ -25,70 +25,60 @@ if not TWELVE_DATA_KEY:
     sys.exit(1)
 
 SYMBOL = 'XAU/USD'
-BACKTEST_DAYS = 60
 
 VARIANTS = {
-    'V1_Baseline_WeekOne': {
-        'chop_filter': False,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V2_CurrentLive': {
-        'chop_filter': True,
-        'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V3_FourFixes_NoChop': {
-        'chop_filter': False,
-        'entry_confirmation': True,
-        'ob_midpoint': True,
-        'structural_sl_tp': True,
-    },
-    'V4_FourFixes_WithChop': {
-        'chop_filter': True,
-        'entry_confirmation': True,
-        'ob_midpoint': True,
-        'structural_sl_tp': True,
-    },
-    'V5_OnlyEntryConfirm': {
-        'chop_filter': False,
-        'entry_confirmation': True,
-        'ob_midpoint': False,
-        'structural_sl_tp': False,
-    },
-    'V6_OnlyOBMidpoint': {
+    'V_G_S55_BASELINE': {
+        'score_threshold': 5.5,
         'chop_filter': False,
         'entry_confirmation': False,
         'ob_midpoint': True,
         'structural_sl_tp': False,
+        'rejection_confirmation': False,
+        'freshness_filter': False,
     },
-    'V7_OnlyStructuralSLTP': {
-        'chop_filter': False,
+    'V_G_S55_CHOP': {
+        'score_threshold': 5.5,
+        'chop_filter': True,
         'entry_confirmation': False,
-        'ob_midpoint': False,
-        'structural_sl_tp': True,
+        'ob_midpoint': True,
+        'structural_sl_tp': False,
+        'rejection_confirmation': False,
+        'freshness_filter': False,
     },
-    'V8_Chop_Plus_StructuralSLTP': {
+    'V_G_S55_CHOP_REJECT': {
+        'score_threshold': 5.5,
         'chop_filter': True,
         'entry_confirmation': False,
         'ob_midpoint': False,
-        'structural_sl_tp': True,
+        'structural_sl_tp': False,
+        'rejection_confirmation': True,
+        'freshness_filter': False,
+    },
+    'V_G_S55_CHOP_REJECT_FRESH': {
+        'score_threshold': 5.5,
+        'chop_filter': True,
+        'entry_confirmation': False,
+        'ob_midpoint': False,
+        'structural_sl_tp': False,
+        'rejection_confirmation': True,
+        'freshness_filter': True,
     },
 }
 
-SCORE_THRESHOLD = 6.0
-COOLDOWN_AFTER_WIN = 24
-COOLDOWN_AFTER_LOSS = 48
+# Live parity: strategy.py L15-16 V_G uses 6/12 (M5-candles)
+COOLDOWN_AFTER_WIN = 6
+COOLDOWN_AFTER_LOSS = 12
 LONDON_OPEN_UTC = 7
 NY_CLOSE_UTC = 21
+# Live parity: strategy.py is_active_session FTMO gap rule
+# (Fri >= 19 UTC: no new signals)
+FRIDAY_SIGNAL_CUTOFF_UTC = 19
 
 # ==============================
 # DATA LOADING (TwelveData)
 # ==============================
 
-def fetch_twelvedata(interval, outputsize):
+def fetch_twelvedata(interval, outputsize, end_date=None):
     url = 'https://api.twelvedata.com/time_series'
     params = {
         'symbol': SYMBOL,
@@ -98,6 +88,8 @@ def fetch_twelvedata(interval, outputsize):
         'format': 'JSON',
         'order': 'ASC',
     }
+    if end_date is not None:
+        params['end_date'] = end_date
 
     resp = requests.get(url, params=params, timeout=30)
     data = resp.json()
@@ -120,14 +112,15 @@ def fetch_twelvedata(interval, outputsize):
     return df
 
 
-def load_data():
-    print(f'Lade {SYMBOL} Daten von TwelveData ({BACKTEST_DAYS} Tage)...')
+def load_data(end_date=None):
+    label = end_date if end_date else 'now'
+    print(f'Lade {SYMBOL} Daten von TwelveData (end_date={label}, ~17 Tage Window)...')
 
-    m5 = fetch_twelvedata('5min', 5000)
+    m5 = fetch_twelvedata('5min', 5000, end_date)
     time.sleep(1)
-    m15 = fetch_twelvedata('15min', 2000)
+    m15 = fetch_twelvedata('15min', 2000, end_date)
     time.sleep(1)
-    h1 = fetch_twelvedata('1h', 1000)
+    h1 = fetch_twelvedata('1h', 1000, end_date)
 
     if m5 is None or m15 is None or h1 is None:
         print('Daten konnten nicht geladen werden')
@@ -351,20 +344,37 @@ def calculate_score(direction, trend, structure, struct_str, bos, at_ob, sweep, 
 # ==============================
 
 def calculate_sl_tp_simple(direction, price, highs, lows, closes):
+    # Live parity: strategy.py calculate_sl_tp L318-349 verbatim port
     atr_val = calculate_atr(highs, lows, closes)
+
     if direction == 'bullish':
         swing_lows = find_swing_lows(lows, 3, 3)
         structure_sl = swing_lows[-1][1] if swing_lows else min(lows[-15:])
-        sl_dist = price - (structure_sl - atr_val * 0.3)
+        sl = structure_sl - atr_val * 0.3
+        sl_dist = price - sl
     else:
         swing_highs = find_swing_highs(highs, 3, 3)
         structure_sl = swing_highs[-1][1] if swing_highs else max(highs[-15:])
-        sl_dist = (structure_sl + atr_val * 0.3) - price
+        sl = structure_sl + atr_val * 0.3
+        sl_dist = sl - price
+
     sl_dist = max(8.0, min(12.0, sl_dist))
     sl = price - sl_dist if direction == 'bullish' else price + sl_dist
-    tp_dist = sl_dist * 2
+
+    if direction == 'bullish':
+        targets = [s[1] for s in find_swing_highs(highs, 3, 3) if s[1] > price]
+        tp_dist = min(targets) - price if targets else sl_dist * 3
+    else:
+        targets = [s[1] for s in find_swing_lows(lows, 3, 3) if s[1] < price]
+        tp_dist = price - max(targets) if targets else sl_dist * 3
+
+    if tp_dist < sl_dist * 2:
+        tp_dist = sl_dist * 2
+
     tp = price + tp_dist if direction == 'bullish' else price - tp_dist
-    return sl, tp, sl_dist, 2.0
+    rr = round(tp_dist / sl_dist, 1)
+
+    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr
 
 
 def calculate_sl_tp_structural(direction, price, highs, lows):
@@ -434,17 +444,35 @@ def generate_signal(data_m5, data_m15, data_h1, config, candle_index,
 
     direction = trend
     rsi_val = rsi(c5)
-    if direction == 'bullish' and rsi_val > 60:
+    # Live parity: strategy.py generate_signal RSI hard-filter 75/25
+    if direction == 'bullish' and rsi_val > 75:
         return None, used_ob, last_signal_idx
-    if direction == 'bearish' and rsi_val < 40:
+    if direction == 'bearish' and rsi_val < 25:
         return None, used_ob, last_signal_idx
+
+    atr_val = calculate_atr(h5, l5, c5)
+
+    if config['freshness_filter']:
+        if direction == 'bullish' and (max(h5[-3:]) - c5[-1]) > 1.5 * atr_val:
+            return None, used_ob, last_signal_idx
+        if direction == 'bearish' and (c5[-1] - min(l5[-3:])) > 1.5 * atr_val:
+            return None, used_ob, last_signal_idx
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
     if ob_low is None:
         return None, used_ob, last_signal_idx
 
-    if config['ob_midpoint']:
-        mid = (ob_low + ob_high) / 2
+    mid = (ob_low + ob_high) / 2
+
+    if config['rejection_confirmation']:
+        prev_close = c5[-2]
+        if direction == 'bullish':
+            if not (l5[-1] < mid and c5[-1] > mid and c5[-1] > prev_close):
+                return None, used_ob, last_signal_idx
+        else:
+            if not (h5[-1] > mid and c5[-1] < mid and c5[-1] < prev_close):
+                return None, used_ob, last_signal_idx
+    elif config['ob_midpoint']:
         if direction == 'bullish' and price > mid:
             return None, used_ob, last_signal_idx
         if direction == 'bearish' and price < mid:
@@ -464,7 +492,7 @@ def generate_signal(data_m5, data_m15, data_h1, config, candle_index,
 
     score = calculate_score(direction, trend, structure, struct_str, bos,
                             True, sweep, zone, rsi_val)
-    if score < SCORE_THRESHOLD:
+    if score < config['score_threshold']:
         return None, used_ob, last_signal_idx
 
     if config['entry_confirmation']:
@@ -517,6 +545,10 @@ def run_backtest(m5, m15, h1, config):
         if hour < LONDON_OPEN_UTC or hour >= NY_CLOSE_UTC:
             continue
 
+        # Live parity: main.py daily cron 07:00 UTC reset_used_ob()
+        if current_time.hour == 7 and current_time.minute == 0:
+            used_ob = None
+
         # Check active trade
         if active_trade is not None:
             high = m5.iloc[i]['high']
@@ -552,10 +584,37 @@ def run_backtest(m5, m15, h1, config):
 
             if closed:
                 active_trade = None
+            elif (current_time.weekday() == 4 and
+                  current_time.hour == 20 and
+                  current_time.minute >= 58):
+                # Friday weekend-gap parity: simulates Henri
+                # manual Friday close (no auto-close in live code)
+                current_price = m5.iloc[i]['close']
+                if active_trade['direction'] == 'BUY':
+                    pnl = current_price - active_trade['entry']
+                else:
+                    pnl = active_trade['entry'] - current_price
+                result = 'WIN' if pnl > 0 else 'LOSS'
+                trades.append({**active_trade, 'result': result,
+                               'pnl': pnl,
+                               'duration_candles': i - active_trade['open_idx']})
+                last_result = result
+                active_trade = None
+                continue
             elif i - active_trade['open_idx'] > 288:
+                # Live parity: main.py L939 EXPIRED logs pnl=0 (break-even)
+                pnl = 0
+                trades.append({**active_trade, 'result': 'LOSS', 'pnl': pnl,
+                               'duration_candles': i - active_trade['open_idx']})
+                last_result = 'LOSS'
                 active_trade = None
 
         if active_trade is not None:
+            continue
+
+        # Live parity: strategy.py is_active_session FTMO gap rule
+        # (Fri >= 19 UTC: no new signals, existing trades unaffected)
+        if current_time.weekday() == 4 and hour >= FRIDAY_SIGNAL_CUTOFF_UTC:
             continue
 
         # Generate signal
@@ -637,65 +696,96 @@ def compute_metrics(trades):
 # ==============================
 
 def main():
+    from datetime import datetime, timedelta
+
+    num_windows = int(os.getenv('NUM_WINDOWS', '5'))
+    window_days = int(os.getenv('WINDOW_DAYS', '17'))
+
     print('=' * 70)
-    print('XAUUSD STRATEGY BACKTEST - 8 VARIANTEN')
+    print(f'XAUUSD WALK-FORWARD BACKTEST - {len(VARIANTS)} VARIANTS x {num_windows} WINDOWS')
     print('=' * 70)
     print()
 
-    m5, m15, h1 = load_data()
+    all_results = {}
+    window_labels = []
+    now = datetime.utcnow()
 
-    results = {}
-    for variant_name, config in VARIANTS.items():
-        print(f'Running {variant_name}...', flush=True)
-        trades = run_backtest(m5, m15, h1, config)
-        metrics = compute_metrics(trades)
-        results[variant_name] = metrics
-        print(f'  Trades: {metrics["total_trades"]} | WR: {metrics["winrate"]}% | '
-              f'PnL: ${metrics["total_pnl"]} | Expectancy: ${metrics["expectancy"]}',
-              flush=True)
-    print()
+    for w in range(num_windows):
+        end_dt = now - timedelta(days=w * window_days)
+        end_date = end_dt.strftime('%Y-%m-%d')
+        window_labels.append(end_date)
 
-    print('=' * 70)
-    print('FULL COMPARISON TABLE')
-    print('=' * 70)
-    df = pd.DataFrame(results).T
-    df = df[['total_trades', 'wins', 'losses', 'winrate', 'total_pnl',
-            'avg_pnl', 'avg_rr', 'fast_stop_rate', 'max_drawdown', 'expectancy']]
-    print(df.to_string())
-    print()
+        print('=' * 70)
+        print(f'WINDOW {w + 1}/{num_windows}  end_date={end_date}')
+        print('=' * 70)
 
-    print('=' * 70)
-    print('RANKING BY EXPECTANCY')
-    print('=' * 70)
-    ranked = sorted(results.items(), key=lambda x: x[1]['expectancy'], reverse=True)
-    for rank, (name, m) in enumerate(ranked, 1):
-        print(f'{rank}. {name:32s} Exp: ${m["expectancy"]:6.2f} | '
-              f'Trades: {m["total_trades"]:3d} | WR: {m["winrate"]:5.1f}% | '
-              f'PnL: ${m["total_pnl"]:7.2f}')
-    print()
+        m5, m15, h1 = load_data(end_date)
 
-    print('=' * 70)
-    print('RANKING BY TOTAL PNL')
-    print('=' * 70)
-    ranked_pnl = sorted(results.items(), key=lambda x: x[1]['total_pnl'], reverse=True)
-    for rank, (name, m) in enumerate(ranked_pnl, 1):
-        print(f'{rank}. {name:32s} PnL: ${m["total_pnl"]:7.2f} | '
-              f'Exp: ${m["expectancy"]:5.2f} | Trades: {m["total_trades"]}')
-    print()
+        for variant_name, config in VARIANTS.items():
+            print(f'  Running {variant_name}...', flush=True)
+            trades = run_backtest(m5, m15, h1, config)
+            metrics = compute_metrics(trades)
+            all_results[(w, variant_name)] = metrics
+            print(f'    Trades: {metrics["total_trades"]} | WR: {metrics["winrate"]}% | '
+                  f'PnL: ${metrics["total_pnl"]} | Expectancy: ${metrics["expectancy"]}',
+                  flush=True)
+        print()
 
-    print('=' * 70)
-    print('RECOMMENDATION')
-    print('=' * 70)
-    best_exp = ranked[0]
-    best_pnl = ranked_pnl[0]
-    if best_exp[0] == best_pnl[0]:
-        print(f'WINNER: {best_exp[0]}')
-        print(f'  Best in both Expectancy and Total PnL')
-    else:
-        print(f'BEST EXPECTANCY: {best_exp[0]} (${best_exp[1]["expectancy"]})')
-        print(f'BEST TOTAL PNL:  {best_pnl[0]} (${best_pnl[1]["total_pnl"]})')
+        if w < num_windows - 1:
+            time.sleep(2)
+
     print()
-    print(f'Data source: TwelveData {SYMBOL}, M5/M15/H1')
+    print('=' * 70)
+    print('EXPECTANCY MATRIX  (rows=Window, cols=Variant)')
+    print('=' * 70)
+    header = 'Window'.ljust(10) + ''.join(f'{v:>14s}' for v in VARIANTS.keys())
+    print(header)
+    for w in range(num_windows):
+        row = f'W{w + 1}'.ljust(10)
+        for variant_name in VARIANTS.keys():
+            exp = all_results[(w, variant_name)]['expectancy']
+            row += f'{exp:>14.2f}'
+        print(row)
+
+    print()
+    print('=' * 70)
+    print('AVG EXPECTANCY PER VARIANT  (across all windows)')
+    print('=' * 70)
+    variant_avg = {}
+    for variant_name in VARIANTS.keys():
+        exps = [all_results[(w, variant_name)]['expectancy'] for w in range(num_windows)]
+        trades = [all_results[(w, variant_name)]['total_trades'] for w in range(num_windows)]
+        wrs = [all_results[(w, variant_name)]['winrate'] for w in range(num_windows)]
+        pnls = [all_results[(w, variant_name)]['total_pnl'] for w in range(num_windows)]
+        avg_exp = sum(exps) / len(exps)
+        total_trades = sum(trades)
+        avg_wr = sum(wrs) / len(wrs)
+        total_pnl = sum(pnls)
+        variant_avg[variant_name] = avg_exp
+        print(f'{variant_name:10s} AvgExp: ${avg_exp:6.2f} | TotalTrades: {total_trades:4d} | '
+              f'AvgWR: {avg_wr:5.1f}% | TotalPnL: ${total_pnl:7.2f}')
+
+    print()
+    print('=' * 70)
+    print('AVG EXPECTANCY PER WINDOW  (across all variants)')
+    print('=' * 70)
+    for w in range(num_windows):
+        exps = [all_results[(w, variant_name)]['expectancy'] for variant_name in VARIANTS.keys()]
+        trades = [all_results[(w, variant_name)]['total_trades'] for variant_name in VARIANTS.keys()]
+        avg_exp = sum(exps) / len(exps)
+        total_trades = sum(trades)
+        print(f'W{w + 1:<2d} end={window_labels[w]}  AvgExp: ${avg_exp:6.2f} | TotalTrades: {total_trades:4d}')
+
+    print()
+    print('=' * 70)
+    print('WINNER BY AVG EXPECTANCY')
+    print('=' * 70)
+    ranked = sorted(variant_avg.items(), key=lambda x: x[1], reverse=True)
+    for rank, (name, avg_exp) in enumerate(ranked, 1):
+        print(f'{rank}. {name:10s} AvgExp: ${avg_exp:6.2f}')
+
+    print()
+    print(f'Data source: TwelveData {SYMBOL}, M5/M15/H1, {num_windows} windows x {window_days}d')
 
 
 if __name__ == '__main__':
