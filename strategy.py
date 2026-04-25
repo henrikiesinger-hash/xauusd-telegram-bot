@@ -345,7 +345,7 @@ def calculate_sl_tp(direction, price, highs, lows, closes):
     tp = price + tp_dist if direction == "bullish" else price - tp_dist
     rr = round(tp_dist / sl_dist, 1)
 
-    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr
+    return round(sl, 2), round(tp, 2), round(sl_dist, 2), rr, round(atr_val, 4)
 
 # ==============================
 # SCORE
@@ -492,7 +492,7 @@ def generate_signal(data_m5, candle_index=0):
     if score < SCORE_THRESHOLD:
         return None
 
-    sl, tp, sl_dist, rr = calculate_sl_tp(direction, price, h5, l5, c5)
+    sl, tp, sl_dist, rr, atr_val = calculate_sl_tp(direction, price, h5, l5, c5)
 
     if BACKTEST_MODE:
         record_signal_backtest(candle_index)
@@ -522,4 +522,13 @@ def generate_signal(data_m5, candle_index=0):
         "score": score,
         "confidence": confidence,
         "regime": regime,
+        "ob_low": round(ob_low, 2),
+        "ob_high": round(ob_high, 2),
+        "trend": trend,
+        "sweep_detected": sweep,
+        "bos_flag": bos,
+        "structure": structure,
+        "zone": zone,
+        "rsi_value": round(rsi_val, 2),
+        "atr_value": round(atr_val, 4),
     }
