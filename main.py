@@ -48,14 +48,17 @@ def init_csv():
             writer.writerow([
                 "timestamp", "date_utc", "direction", "entry", "sl", "tp",
                 "sl_dist", "tp_dist", "rr", "score", "confidence",
-                "result", "pnl", "duration_h", "regime"
+                "result", "pnl", "duration_h", "regime",
+                "ob_low", "ob_high", "trend", "sweep_detected", "bos_flag",
+                "structure", "zone", "rsi_value", "atr_value",
+                "exit_time", "exit_price"
             ])
 
 
 init_csv()
 
 
-def log_trade(trade, result, pnl, duration_h):
+def log_trade(trade, result, pnl, duration_h, exit_time=None, exit_price=None):
     rr = round(trade["tp_dist"] / trade["sl_dist"], 1) if trade["sl_dist"] > 0 else 0
     date_utc = time.strftime("%Y-%m-%d %H:%M", time.gmtime(trade["timestamp"]))
 
@@ -72,6 +75,17 @@ def log_trade(trade, result, pnl, duration_h):
                 trade.get("confidence", ""),
                 result, round(pnl, 2), round(duration_h, 1),
                 trade.get("regime", ""),
+                trade.get("ob_low", ""),
+                trade.get("ob_high", ""),
+                trade.get("trend", ""),
+                trade.get("sweep_detected", ""),
+                trade.get("bos_flag", ""),
+                trade.get("structure", ""),
+                trade.get("zone", ""),
+                trade.get("rsi_value", ""),
+                trade.get("atr_value", ""),
+                exit_time if exit_time is not None else "",
+                round(exit_price, 2) if exit_price is not None else "",
             ])
         log.info("CSV logged: %s %s | %s | $%.2f",
                  trade["direction"], trade["entry"], result, pnl)
@@ -95,6 +109,17 @@ def log_trade(trade, result, pnl, duration_h):
         "pnl": round(pnl, 2),
         "duration_h": round(duration_h, 1),
         "regime": trade.get("regime", ""),
+        "ob_low": trade.get("ob_low"),
+        "ob_high": trade.get("ob_high"),
+        "trend": trade.get("trend"),
+        "sweep_detected": trade.get("sweep_detected"),
+        "bos_flag": trade.get("bos_flag"),
+        "structure": trade.get("structure"),
+        "zone": trade.get("zone"),
+        "rsi_value": trade.get("rsi_value"),
+        "atr_value": trade.get("atr_value"),
+        "exit_time": exit_time,
+        "exit_price": round(exit_price, 2) if exit_price is not None else None,
     })
 
 
@@ -823,17 +848,18 @@ def check_trade_result(trade):
         for i in range(start, len(data["close"])):
             high = data["high"][i]
             low = data["low"][i]
+            exit_time = trade["timestamp"] + (i - start + 1) * 300
 
             if trade["direction"] == "BUY":
                 if low <= trade["sl"]:
-                    return "LOSS"
+                    return "LOSS", exit_time, trade["sl"]
                 if high >= trade["tp"]:
-                    return "WIN"
+                    return "WIN", exit_time, trade["tp"]
             else:
                 if high >= trade["sl"]:
-                    return "LOSS"
+                    return "LOSS", exit_time, trade["sl"]
                 if low <= trade["tp"]:
-                    return "WIN"
+                    return "WIN", exit_time, trade["tp"]
 
         return None
 
@@ -892,7 +918,8 @@ def check_active_trades():
                 f'FTMO Compliance: No open trades outside session.'
             )
 
-            log_trade(trade, 'SESSION_CLOSE', pnl, age_hours)
+            log_trade(trade, 'SESSION_CLOSE', pnl, age_hours,
+                      exit_time=time.time(), exit_price=current_price)
             _session_close_warned.discard(trade_id)
             continue
 
@@ -907,7 +934,10 @@ def check_active_trades():
                     f'Bitte manuell schliessen oder wird bei 20:58 UTC auto-geschlossen.'
                 )
 
-        result = check_trade_result(trade)
+        resolution = check_trade_result(trade)
+        result = resolution[0] if resolution else None
+        exit_time = resolution[1] if resolution else None
+        exit_price = resolution[2] if resolution else None
 
         if result:
             strategy.record_trade_resolution(result)
@@ -929,14 +959,16 @@ def check_active_trades():
             )
 
             send_telegram(msg)
-            log_trade(trade, result, pnl, age_hours)
+            log_trade(trade, result, pnl, age_hours,
+                      exit_time=exit_time, exit_price=exit_price)
             _session_close_warned.discard(trade_id)
 
         elif age_hours > 24:
             send_telegram(
                 f'⏰ Trade expired: {trade["direction"]} @ {trade["entry"]}'
             )
-            log_trade(trade, 'EXPIRED', 0, age_hours)
+            log_trade(trade, 'EXPIRED', 0, age_hours,
+                      exit_time=None, exit_price=None)
             _session_close_warned.discard(trade_id)
 
         else:
@@ -1145,6 +1177,15 @@ def run_analysis():
                 "confidence": signal.get("confidence", ""),
                 "regime": signal.get("regime", ""),
                 "timestamp": time.time(),
+                "ob_low": signal.get("ob_low"),
+                "ob_high": signal.get("ob_high"),
+                "trend": signal.get("trend"),
+                "sweep_detected": signal.get("sweep_detected"),
+                "bos_flag": signal.get("bos_flag"),
+                "structure": signal.get("structure"),
+                "zone": signal.get("zone"),
+                "rsi_value": signal.get("rsi_value"),
+                "atr_value": signal.get("atr_value"),
             })
             final_snapshot = list(active_trades)
 
