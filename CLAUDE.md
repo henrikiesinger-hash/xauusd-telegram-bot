@@ -147,3 +147,19 @@ Include: error message, hypothesis for cause, numbered requirements.
 1. Write plan first, get approval
 1. Implement with tests
 1. Verify existing signals not degraded
+
+### Schema-Migration Workflow
+
+- Migrations are ADDITIVE only: `ALTER TABLE ADD COLUMN`, never DROP/RENAME on live tables
+- All new columns NULLABLE, use `IF NOT EXISTS` for idempotency
+- Order: SQL migration first (Supabase Dashboard manual), then code-deploy
+- Rollback path: code-revert only — DB columns stay (no DROP needed, additive)
+- Container is ephemeral on Railway: do not assume local-state persistence
+
+### bos_flag / sweep_detected Naming Note
+
+`bos_flag` and `sweep_detected` are TEXT columns, not BOOLEAN. They carry direction info: `'bullish'` / `'bearish'` / `None` (NULL in DB). No bool-conversion in the logging path — raw value is logged for symmetry with `trend`.
+
+### Backtest SL/TP Tuple Note
+
+`strategy.calculate_sl_tp` returns a 5-tuple as of Stage 2: `(sl, tp, sl_dist, rr, atr_val)`. Backtest files (`backtest_top5.py`, `backtest_variants*.py`, `backtest_diagnosis.py`, `backtest_sell_diagnosis.py`, `backtest_nonsmc.py`) have their OWN copies named `calculate_sl_tp_simple` / `_structural` / `_atr` — these are NOT synced with the live function. When tuning live strategy, propagate changes to backtest copies separately if needed.

@@ -211,6 +211,15 @@ def save_open_trades(trades):
             'score': t.get('score', 0),
             'confidence': t.get('confidence', ''),
             'regime': t.get('regime', ''),
+            'ob_low': t.get('ob_low'),
+            'ob_high': t.get('ob_high'),
+            'trend': t.get('trend'),
+            'sweep_detected': t.get('sweep_detected'),
+            'bos_flag': t.get('bos_flag'),
+            'structure': t.get('structure'),
+            'zone': t.get('zone'),
+            'rsi_value': t.get('rsi_value'),
+            'atr_value': t.get('atr_value'),
         })
 
     try:
