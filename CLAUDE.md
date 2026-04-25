@@ -131,10 +131,11 @@ Run /recap at session start to refresh context from previous session.
 ## Current Status
 
 - **Account:** FTMO 80k 1-Step Standard (Order 23264598, opened 2026-04-09)
-- **Live Config:** V_G_Score65 (Score 5.5, Cooldown 6/12, RSI 75/25, OB Midpoint ON)
+- **Live Config:** V_G_S55 (Score 5.5, Cooldown 6/12, RSI 75/25, OB Midpoint ON) — unchanged since 2026-04-23
 - **Backup:** Branch v6-live-backup-20260418 at commit 8d2decb (FTMO-Fix V6 state)
 - **Regime Detection:** Shadow mode active, logging only, no filtering
-- **Next:** Monitor V_G live performance (2 weeks), compare vs backtest
+- **Stage 2 Logging-Fix:** Deployed 2026-04-25 via squash-commit `791c692` (parent `7f36aa2`). Schema-migration: `trades` +11 cols, `open_trades` +9 cols (Supabase, additive). Rollback anchor: `7f36aa2` — code-revert only, DB columns remain.
+- **Next:** Collect 20-30 trades with Stage 2 entry-quality + exit fields, then analyze winner-vs-loser per field. Monitor V_G live performance.
 
 ## Development Guidelines
 
@@ -163,3 +164,15 @@ Include: error message, hypothesis for cause, numbered requirements.
 ### Backtest SL/TP Tuple Note
 
 `strategy.calculate_sl_tp` returns a 5-tuple as of Stage 2: `(sl, tp, sl_dist, rr, atr_val)`. Backtest files (`backtest_top5.py`, `backtest_variants*.py`, `backtest_diagnosis.py`, `backtest_sell_diagnosis.py`, `backtest_nonsmc.py`) have their OWN copies named `calculate_sl_tp_simple` / `_structural` / `_atr` — these are NOT synced with the live function. When tuning live strategy, propagate changes to backtest copies separately if needed.
+
+### Logging Pipeline (Stage 2)
+
+- `signal-dict` (strategy.py): 18 keys total — 9 base (direction/entry/sl/tp/rr/sl_dist/score/confidence/regime) + 9 entry-quality (ob_low, ob_high, trend, sweep_detected, bos_flag, structure, zone, rsi_value, atr_value).
+- `active_trades` (main.py): 19-key dict, carries entry-quality through trade lifecycle until close.
+- `log_trade` (main.py): signature `(trade, result, pnl, duration_h, exit_time=None, exit_price=None)`. Entry-quality read via `trade.get(...)` — same pattern as confidence/regime.
+- `check_trade_result` (main.py): returns 3-tuple `(result, exit_time, exit_price)` on hit, `None` on no-hit. exit_time approximated as `trade['timestamp'] + (i - start + 1) * 300` (M5 = 300s).
+- Exit-time conventions: WIN/LOSS via candle-index approximation (±300s), SESSION_CLOSE via `time.time()`, EXPIRED `None` (no hit detection, PnL stays 0).
+- Exit-price conventions: WIN → `tp`, LOSS → `sl`, SESSION_CLOSE → `current_price` (last M5 close), EXPIRED → `None`.
+- `init_csv` header: 26 columns (15 legacy + 9 entry-quality + 2 exit). Existing CSVs without new header continue to work via append (column-misalignment risk if read mid-migration; Supabase is source of truth).
+- `save_open_trades` (database.py): writes 19 keys (10 legacy + 9 entry-quality). exit fields NOT in open_trades (close-time only).
+- `load_open_trades` (database.py): pass-through `select *` — 19 keys auto-restored, NULL → None.
