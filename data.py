@@ -1,6 +1,9 @@
+import logging
 import requests
 import time
 from config import TWELVE_DATA_KEY, SYMBOL
+
+log = logging.getLogger("data")
 
 # Cache für verschiedene Timeframes
 CACHE = {}
@@ -39,11 +42,32 @@ def get_candles(interval, limit=200):
 
         values = list(reversed(data["values"]))
 
+        opens = [float(x["open"]) for x in values]
+        highs = [float(x["high"]) for x in values]
+        lows = [float(x["low"]) for x in values]
+        closes = [float(x["close"]) for x in values]
+
+        # Garbage-Candle-Validation (Memory #18, Trade #21 Fix)
+        mask = [
+            o > 0 and l > 0 and c > 0 and h >= max(o, c) and l <= min(o, c)
+            for o, h, l, c in zip(opens, highs, lows, closes)
+        ]
+        rejected = sum(1 for m in mask if not m)
+        if rejected > 0:
+            log.warning(
+                f"[CANDLE_REJECTED] symbol={SYMBOL} interval={interval} "
+                f"rejected_count={rejected} total={len(opens)}"
+            )
+            opens = [o for o, m in zip(opens, mask) if m]
+            highs = [h for h, m in zip(highs, mask) if m]
+            lows = [l for l, m in zip(lows, mask) if m]
+            closes = [c for c, m in zip(closes, mask) if m]
+
         candles = {
-            "open": [float(x["open"]) for x in values],
-            "high": [float(x["high"]) for x in values],
-            "low": [float(x["low"]) for x in values],
-            "close": [float(x["close"]) for x in values],
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
         }
 
         # 🔥 CACHE SAVE

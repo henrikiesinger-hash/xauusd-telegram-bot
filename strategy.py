@@ -2,6 +2,7 @@ import logging
 import time
 from indicators import ema, rsi
 from data import get_candles
+from config import SYMBOL
 
 log = logging.getLogger("strategy")
 
@@ -464,6 +465,17 @@ def generate_signal(data_m5, candle_index=0):
 
     ob_low, ob_high = detect_orderblock(h15, l15, o15, c15, direction)
     if ob_low is None:
+        return None
+
+    # ATR-Berechnung early für Garbage-Data-Sanity (Memory #18, Trade #21 Fix)
+    atr_value = calculate_atr(h5, l5, c5)
+
+    # Sanity: reject Signale aus kaputten TwelveData-Candles
+    if atr_value > 50 or ob_low <= 0 or ob_high <= 0:
+        log.warning(
+            f"[SIGNAL_REJECTED_GARBAGE] symbol={SYMBOL} "
+            f"atr={atr_value:.2f} ob_low={ob_low} ob_high={ob_high}"
+        )
         return None
 
     ob_mid = (ob_low + ob_high) / 2
